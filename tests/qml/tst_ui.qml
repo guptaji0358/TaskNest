@@ -1043,4 +1043,46 @@ TestCase {
         tryCompare(fixture.model, "count", 1)
         compare(storedTitles(), ["second"])
     }
+
+    // ---- keyboard-only use ------------------------------------------------------------
+
+    function test_keyboardOnlyDeleteWithEnterKeepsFocusOnTheList() {
+        seed("one"); seed("two"); seed("three"); seed("four")
+        view.focusRow(1)   // works even though the delegates are not created yet
+        tryVerify(function () { return row(1).activeFocus }, 2000)
+        keyClick(Qt.Key_Delete)
+        tryCompare(view.deleteConfirmDialog, "opened", true) // transition done, focus on Cancel
+        keyClick(Qt.Key_Tab)          // Cancel -> Delete
+        keyClick(Qt.Key_Return)       // Enter activates the focused button
+        tryCompare(fixture.model, "count", 3)
+        compare(storedTitles(), ["one", "three", "four"])
+        // focus is back on a task row, not lost
+        tryVerify(function () { return row(1) !== null && row(1).activeFocus }, 2000, "focus restored to the neighbouring row")
+        keyClick(Qt.Key_Down)
+        tryVerify(function () { return row(2).activeFocus }, 2000)
+    }
+
+    function test_enterOnDefaultCancelKeepsTheTaskAndTheFocus() {
+        seed("keep"); seed("also keep")
+        view.focusRow(0)
+        tryVerify(function () { return row(0).activeFocus }, 2000)
+        keyClick(Qt.Key_Delete)
+        tryCompare(view.deleteConfirmDialog, "opened", true) // transition done, focus on Cancel
+        keyClick(Qt.Key_Return)       // the safe default (Cancel) is focused
+        tryCompare(view.deleteConfirmDialog, "visible", false)
+        compare(storedTitles().length, 2)
+        tryVerify(function () { return row(0).activeFocus }, 2000)
+    }
+
+    function test_editorOpensOnTitleAndEscapeReturnsToTheRow() {
+        seed("edit me")
+        view.focusRow(0)
+        tryVerify(function () { return row(0).activeFocus }, 2000)
+        keyClick(Qt.Key_Return)
+        tryCompare(view.editorDialog, "visible", true)
+        tryVerify(function () { return find("editorTitle").activeFocus }, 2000)
+        keyClick(Qt.Key_Escape)
+        tryCompare(view.editorDialog, "visible", false)
+        tryVerify(function () { return row(0).activeFocus }, 2000)
+    }
 }

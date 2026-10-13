@@ -122,7 +122,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
                 iconName: "bell"
-                placeholderText: "Reminder YYYY-MM-DD"
+                placeholderText: "Remind YYYY-MM-DD"
                 invalid: root.errorText.indexOf("Reminder") === 0 || root.errorText.indexOf("That reminder") === 0
                 onAccepted: root.submitted()
             }

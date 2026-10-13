@@ -121,8 +121,16 @@ Item {
         taskList.currentIndex = index
         taskList.positionViewAtIndex(index, ListView.Contain)
         const item = taskList.itemAtIndex(index)
-        if (item)
+        if (item) {
             item.forceActiveFocus()
+        } else {
+            // The delegate is created on the next frame (list just changed).
+            Qt.callLater(function () {
+                const created = taskList.itemAtIndex(index)
+                if (created)
+                    created.forceActiveFocus()
+            })
+        }
     }
 
     function focusList() {
@@ -883,6 +891,7 @@ Item {
     function askDelete(taskRow) {
         deleteDialog.taskId = taskRow.id
         deleteDialog.taskTitle = taskRow.title
+        deleteDialog.rowIndex = taskRow.index !== undefined ? taskRow.index : -1
         deleteDialog.open()
     }
 
@@ -897,6 +906,7 @@ Item {
         objectName: "shortcutsDialog"
         title: "Keyboard shortcuts"
         width: Math.min(460, parent ? parent.width - 32 : 460)
+        onOpened: shortcutsCloseButton.forceActiveFocus() // Enter/Space closes it
 
         readonly property var entries: [
             { keys: "Ctrl+N", what: "New task (focus the add field)" },
@@ -950,6 +960,7 @@ Item {
         footer: Item {
             implicitHeight: 64
             TNButton {
+                id: shortcutsCloseButton
                 objectName: "shortcutsClose"
                 anchors.right: parent.right
                 anchors.rightMargin: Theme.s5
@@ -966,10 +977,24 @@ Item {
 
         property var taskId: 0
         property string taskTitle: ""
+        property int rowIndex: -1       // where the task was, for focus afterwards
+        property int focusRowAfter: -1  // set when a delete went through
         property bool closing: false
 
         onAboutToShow: closing = false
         onAboutToHide: closing = true
+        onClosed: {
+            // The deleted row's focus is gone: put it on the neighbouring task
+            // (or search), so keyboard use can continue without the mouse.
+            if (focusRowAfter >= 0) {
+                const target = Math.min(focusRowAfter, root.taskModel.count - 1)
+                focusRowAfter = -1
+                if (target >= 0)
+                    root.focusRow(target)
+                else
+                    searchField.forceActiveFocus()
+            }
+        }
 
         title: "Delete task?"
         width: Math.min(420, parent ? parent.width - 32 : 420)
@@ -1014,8 +1039,10 @@ Item {
                         const deletedTitle = deleteDialog.taskTitle
                         const ok = root.taskModel.removeTask(deleteDialog.taskId)
                         deleteDialog.close()
-                        if (ok)
+                        if (ok) {
+                            deleteDialog.focusRowAfter = Math.max(deleteDialog.rowIndex, 0)
                             root.offerUndo(deletedTitle)
+                        }
                     }
                 }
             }

@@ -32,6 +32,21 @@ Button {
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
 
+    // Qt buttons activate on Space only; Windows users also expect Enter on a
+    // focused button (especially in dialogs).
+    Keys.onReturnPressed: (event) => {
+        if (control.enabled && control.visible && !control.checkable) {
+            control.clicked()
+            event.accepted = true
+        }
+    }
+    Keys.onEnterPressed: (event) => {
+        if (control.enabled && control.visible && !control.checkable) {
+            control.clicked()
+            event.accepted = true
+        }
+    }
+
     contentItem: Item {
         implicitWidth: row.implicitWidth
         implicitHeight: row.implicitHeight
