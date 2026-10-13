@@ -549,4 +549,42 @@ TestCase {
         mouseClick(find("taskCheck", row(0)))
         tryVerify(function () { return find("reminderBanner") === null })
     }
+
+    // ---- resizing ---------------------------------------------------------------------
+
+    function test_editorFitsInsideMinimumWindow() {
+        seed("Editor size", "", dayAt(1, 9))
+        const editor = openEditor()
+        // Force the error line to show too: the tallest the dialog gets.
+        find("editorDate").text = "bad"
+        mouseClick(find("editorSave"))
+        const overlay = Overlay.overlay
+        verify(editor.height <= overlay.height, "editor height " + editor.height + " <= " + overlay.height)
+        verify(editor.y >= 0, "editor top inside window")
+        // Save/Cancel buttons are reachable (inside the window)
+        const save = find("editorSave")
+        const p = save.mapToItem(overlay, 0, save.height)
+        verify(p.y <= overlay.height, "Save button visible: bottom " + p.y)
+        mouseClick(find("editorCancel"))
+    }
+
+    function test_layoutAdaptsToLargeWindow() {
+        seed("A", "", dayAt(1, 9))
+        seed("B")
+        view.width = 1400
+        view.height = 900
+        waitForRendering(view)
+        const list = find("taskList")
+        const field = find("addField")
+        const r = row(0)
+        const fp = field.mapToItem(view, 0, 0)
+        const rp = r.mapToItem(view, 0, 0)
+        verify(list.width > 900, "list grows with the window")
+        // rows line up with the controls above them (same right edge, within the scrollbar gutter)
+        verify(Math.abs((rp.x + r.width) - (fp.x + field.width + find("addButton").width + 8)) <= 2,
+               "row right edge " + (rp.x + r.width) + " vs controls " + (fp.x + field.width + find("addButton").width + 8))
+        const del = find("deleteButton", r)
+        const dp = del.mapToItem(r, 0, 0)
+        verify(dp.x + del.width <= r.width + 0.5)
+    }
 }

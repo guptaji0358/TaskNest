@@ -486,7 +486,8 @@ Item {
                         required property var model
                         required property int index
                         objectName: "taskRow"
-                        width: ListView.view.width - 12
+                        // Full width, leaving room for the scrollbar only when it is shown.
+                        width: taskList.width - (taskList.contentHeight > taskList.height ? 14 : 0)
                         readonly property bool hasDue: model.dueAt !== undefined && model.dueAt !== null
                                                        && !isNaN(model.dueAt.getTime())
                         // Self-contained (does not rely on hasDue being re-evaluated first).

@@ -46,18 +46,23 @@ TaskNest/
 ├── .git/
 ├── .gitignore
 ├── CLAUDE.md
+├── CMakeLists.txt
 ├── scripts/
 │   ├── src/        # .cpp implementation files with a matching header in include/
 │   ├── include/    # .h/.hpp headers matching files in src/
-│   └── main/       # main.cpp and other entry points without a matching project header
-└── tests/          # Qt Test suites (built by default; run tst_tasknest and tst_ui from the build dir, or ctest)
+│   └── main/       # main.cpp, Main.qml, MainView.qml, TaskEditor.qml (entry point and UI)
+├── tests/          # Qt Test suites (tst_tasknest, tst_ui)
+└── out/            # ALL generated output; git-ignored, safe to delete and rebuild
+    ├── bin/        # TaskNest.exe (the only application executable) and its data/ folder
+    └── build/      # CMake/Ninja build tree, test executables, generated sources
 ```
 
 Rules:
 
 - `scripts/src/` — implementation (`.cpp`) files that have a corresponding header in `scripts/include/`. Application logic lives here.
 - `scripts/include/` — project headers (`.h`/`.hpp`) corresponding to files in `scripts/src/`. Declarations and interfaces only.
-- `scripts/main/` — `main.cpp` and other entry-point files with no corresponding project header; build or launcher scripts where appropriate. Build outputs go here only if the build configuration explicitly directs them there. Do not put ordinary implementation files or their headers here.
+- `scripts/main/` — `main.cpp`, the QML files and other entry-point files with no corresponding project header. Do not put ordinary implementation files or their headers here, and never put generated files here.
+- `out/` — every generated file (build tree, objects, libraries, executables, test binaries, the portable `data/` database folder). Nothing generated may be written to `scripts/`, `tests/` or the repository root.
 - The folder is named `scripts` but is not limited to executable scripts; follow the conventions above.
 - Existing top-level folders such as `resources/` (Qt resource file `app.qrc`, Windows resource file `app.rc`) and `Assets/` are intentional project assets; keep them and add to them only where appropriate.
 - `.gitkeep` files are placeholders; remove one once its directory contains real files.
@@ -79,7 +84,16 @@ Rules:
 ## Build Expectations
 
 - Build system: CMake, with all paths relative to the repository root (use `CMAKE_SOURCE_DIR` / `CMAKE_CURRENT_SOURCE_DIR`).
-- Out-of-source builds only (e.g. `build/`); build directories are git-ignored.
+- Out-of-source builds only, in `out/build/`; `out/` is git-ignored.
+- One configuration, one executable: the app is always `out/bin/TaskNest.exe`. The default build type is Release; configuring the same build directory with `-DCMAKE_BUILD_TYPE=Debug` rebuilds that same file as a Debug build. Do not create per-configuration output folders or duplicate executables.
+- Qt and MinGW runtime DLLs are not copied next to the executable; they must be on `PATH` (see below). No installer or deployment package exists yet.
+- Build commands, run from the repository root (PATH must contain `D:\Apps\Qt6\Tools\mingw1310_64\bin`, `D:\Apps\Qt6\Tools\Ninja`, `D:\Apps\Qt6\Tools\CMake_64\bin`, and `D:\Apps\Qt6\6.11.1\mingw_64\bin` to run it):
+
+  ```
+  cmake -S . -B out/build -G Ninja -DCMAKE_PREFIX_PATH=D:/Apps/Qt6/6.11.1/mingw_64 -DCMAKE_CXX_COMPILER=D:/Apps/Qt6/Tools/mingw1310_64/bin/g++.exe
+  cmake --build out/build
+  ctest --test-dir out/build --output-on-failure
+  ```
 - Link only required Qt modules (Core, Gui, Qml, Quick, Sql).
 - Do not commit executables, object files, or generated files.
 - Do not add third-party dependencies or download libraries without explicit approval.
