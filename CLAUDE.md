@@ -52,7 +52,7 @@ TaskNest/
 │   ├── include/    # .h/.hpp headers matching files in src/
 │   └── main/       # main.cpp, Main.qml, MainView.qml, TaskEditor.qml (entry point and UI)
 ├── tests/          # Qt Test suites (tst_tasknest, tst_ui)
-└── out/            # ALL generated output; git-ignored, safe to delete and rebuild
+└── out/            # generated output; git-ignored. out/build is disposable; out/bin/data is NOT
     ├── bin/        # TaskNest.exe (the only application executable) and its data/ folder
     └── build/      # CMake/Ninja build tree, test executables, generated sources
 ```
@@ -62,12 +62,26 @@ Rules:
 - `scripts/src/` — implementation (`.cpp`) files that have a corresponding header in `scripts/include/`. Application logic lives here.
 - `scripts/include/` — project headers (`.h`/`.hpp`) corresponding to files in `scripts/src/`. Declarations and interfaces only.
 - `scripts/main/` — `main.cpp`, the QML files and other entry-point files with no corresponding project header. Do not put ordinary implementation files or their headers here, and never put generated files here.
-- `out/` — every generated file (build tree, objects, libraries, executables, test binaries, the portable `data/` database folder). Nothing generated may be written to `scripts/`, `tests/` or the repository root.
+- `out/` — every generated file (build tree, objects, libraries, executables, test binaries) plus the portable `data/` database folder. Nothing generated may be written to `scripts/`, `tests/` or the repository root.
+- **`out/bin/data/` holds the live task database and is not disposable.** Delete or clean only `out/build` (or run `cmake --build out/build --target clean`, which leaves `data/` alone). Deleting `out/` or `out/bin/data/` deletes the user's tasks.
 - The folder is named `scripts` but is not limited to executable scripts; follow the conventions above.
 - Existing top-level folders such as `resources/` (Qt resource file `app.qrc`, Windows resource file `app.rc`) and `Assets/` are intentional project assets; keep them and add to them only where appropriate.
 - `.gitkeep` files are placeholders; remove one once its directory contains real files.
 - `tests/` holds automated tests. They must use temporary database files, never the user's real database.
 - Do not create unnecessary directories or placeholder source files.
+
+## Database Location and Safety
+
+- File name: `tasknest.db`. Chosen by `Database::defaultDatabasePath()` in this order:
+  1. an existing `<exe folder>/data/tasknest.db` (portable mode);
+  2. an existing `%APPDATA%\TaskNest\tasknest.db`;
+  3. on first run only: `<exe folder>/data/` if writable, otherwise `%APPDATA%\TaskNest\`.
+- An existing database is always reused. If it exists but its folder is not writable, startup fails with an explicit message; TaskNest never quietly creates a second, empty database elsewhere.
+- The active path is shown in the sidebar footer (tooltip: full path).
+- Upgrading an existing database first copies it to `tasknest.db.v<N>.bak` (once per source version, byte-identical). If the copy cannot be made, the upgrade is not attempted and the database is left untouched.
+- Do not keep the live database in a folder that a cloud-sync client (OneDrive, Dropbox) is syncing: SQLite files and sync conflicts do not mix. The development checkout lives under OneDrive, so keep copies of `out/bin/data/` if the data matters.
+- Only one TaskNest instance should use a database at a time (there is no single-instance guard yet).
+- Tests must use temporary databases; never point a test at `out/bin/data/`.
 
 ## UI Design System
 

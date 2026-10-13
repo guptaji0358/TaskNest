@@ -19,6 +19,8 @@
 #include <QTimeZone>
 #include <QtTest>
 
+#include <limits>
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -268,6 +270,56 @@ private slots:
         QVERIFY(!db.initialize(file));
         QVERIFY(!db.isReady());
         QCOMPARE(fileHash(file), before);
+    }
+
+    void migration_upgradeKeepsBackupOfTheOriginal()
+    {
+        const QString file = path("backup.db");
+        QStringList seed = v1Statements();
+        seed << "CREATE TABLE user_notes (n TEXT)" << "INSERT INTO user_notes VALUES ('precious')";
+        QVERIFY(runSql(file, seed));
+        const QByteArray original = fileHash(file);
+
+        {
+            Database db;
+            QVERIFY2(db.initialize(file), qPrintable(db.lastError()));
+            QCOMPARE(db.schemaVersion(), 2);
+        }
+        const QString backup = file + ".v1.bak";
+        QVERIFY(QFile::exists(backup));
+        QCOMPARE(fileHash(backup), original);                          // byte-identical
+        QCOMPARE(scalar(backup, "PRAGMA user_version").toInt(), 1);    // still the old schema
+        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 2);
+
+        // a database that is already current is never backed up again
+        const QByteArray backupBefore = fileHash(backup);
+        { Database db; QVERIFY(db.initialize(file)); }
+        QCOMPARE(fileHash(backup), backupBefore);
+    }
+
+    void migration_failedBackupBlocksTheUpgrade()
+    {
+        const QString file = path("nobackup.db");
+        QVERIFY(runSql(file, v1Statements()));
+        // A directory where the backup file should go makes the copy impossible.
+        QVERIFY(QDir().mkpath(file + ".v1.bak"));
+        const QByteArray before = fileHash(file);
+
+        Database db;
+        QVERIFY(!db.initialize(file));
+        QVERIFY(db.lastError().contains("back up"));
+        QVERIFY(!db.isReady());
+        QCOMPARE(fileHash(file), before);   // untouched: still schema v1
+        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 1);
+    }
+
+    void migration_freshDatabaseNeedsNoBackup()
+    {
+        const QString file = path("nobackup_fresh.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        QVERIFY(!QFile::exists(file + ".v0.bak"));
+        QVERIFY(!QFile::exists(file + ".v1.bak"));
     }
 
     // ---- repository ------------------------------------------------------
@@ -1038,6 +1090,29 @@ private slots:
 
         f.scheduler.stop();
         QVERIFY(!f.scheduler.isTimerActive());
+    }
+
+    void scheduler_veryDistantReminderIsClampedAndReArms()
+    {
+        SchedulerFixture f(path("sched_far.db"), kStart);
+        QVERIFY(f.ok);
+        // ~70 years away: further than a QTimer interval (int ms, ~24.8 days) can hold.
+        Task task = draft("someday");
+        task.reminderAt = kStart.addYears(70);
+        QVERIFY(f.repo.addTask(task));
+
+        f.scheduler.reschedule();
+        QVERIFY(f.scheduler.isTimerActive());
+        QCOMPARE(f.scheduler.timerInterval(), std::numeric_limits<int>::max());
+        QCOMPARE(f.scheduler.nextReminderAt(), kStart.addYears(70));
+
+        // The timer fires early (as it must, after ~24.8 days): nothing is announced
+        // and the wait is simply armed again.
+        f.now = kStart.addDays(25);
+        f.scheduler.processDue();
+        QCOMPARE(f.fired.size(), 0);
+        QVERIFY(f.scheduler.isTimerActive());
+        QCOMPARE(f.scheduler.nextReminderAt(), kStart.addYears(70));
     }
 
     void scheduler_realTimerFiresOnceAndStops()

@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QSqlDatabase>
 #include <QSqlError>
@@ -161,15 +162,32 @@ QString Database::defaultDatabasePath(QString *error)
     const QString userDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     const QString userPath = userDir.isEmpty() ? QString() : QDir(userDir).filePath(kFileName);
 
-    const bool portableWritable = isWritableDirectory(portableDir);
+    // 1. Keep using whichever database already exists, so a changed environment
+    //    never silently starts a second, empty database.
+    if (QFileInfo::exists(portablePath)) {
+        if (isWritableDirectory(portableDir))
+            return portablePath;
+        // The data is there but cannot be used: say so instead of quietly
+        // creating an empty database somewhere else.
+        if (error) {
+            *error = QStringLiteral("A database exists at \"%1\" but its folder is not writable.")
+                         .arg(QDir::toNativeSeparators(portablePath));
+        }
+        return QString();
+    }
+    if (!userPath.isEmpty() && QFileInfo::exists(userPath)) {
+        if (isWritableDirectory(userDir))
+            return userPath;
+        if (error) {
+            *error = QStringLiteral("A database exists at \"%1\" but its folder is not writable.")
+                         .arg(QDir::toNativeSeparators(userPath));
+        }
+        return QString();
+    }
 
-    // Keep using whichever database already exists so a changed environment
-    // never silently starts a second, empty database.
-    if (portableWritable && QFileInfo::exists(portablePath))
-        return portablePath;
-    if (!userPath.isEmpty() && QFileInfo::exists(userPath) && isWritableDirectory(userDir))
-        return userPath;
-    if (portableWritable)
+    // 2. First run: portable (beside the executable) if possible, else per-user.
+    //    The data/ folder is only created here, when it is actually going to be used.
+    if (isWritableDirectory(portableDir))
         return portablePath;
     if (!userPath.isEmpty() && isWritableDirectory(userDir))
         return userPath;
@@ -262,6 +280,18 @@ bool Database::migrate()
     }
 
     if (version < kSchemaVersion) {
+        // Upgrading an existing database: keep a copy of it exactly as it was
+        // (once per source version) before the schema is touched. If the copy
+        // cannot be made, the upgrade is not attempted.
+        if (version > 0) {
+            const QString backup = QStringLiteral("%1.v%2.bak").arg(m_databasePath).arg(version);
+            if (!QFileInfo(backup).isFile() && !QFile::copy(m_databasePath, backup)) {
+                return fail(QStringLiteral("Cannot back up the database to \"%1\" before upgrading it. "
+                                           "The database was left untouched.")
+                                .arg(QDir::toNativeSeparators(backup)));
+            }
+        }
+
         if (!db.transaction())
             return fail(QStringLiteral("Cannot start transaction: %1").arg(db.lastError().text()));
 

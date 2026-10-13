@@ -633,4 +633,46 @@ TestCase {
         compare(find("editorTitle").cursorPosition, 0)
         mouseClick(find("editorCancel"))
     }
+
+    // ---- reliability ----------------------------------------------------------------
+
+    function test_keyboardShortcutsFocusSearchAndAdd() {
+        view.forceActiveFocus()
+        keyClick(Qt.Key_F, Qt.ControlModifier)
+        tryVerify(function () { return find("searchField").activeFocus }, 2000, "Ctrl+F focuses search")
+        keyClick(Qt.Key_N, Qt.ControlModifier)
+        tryVerify(function () { return find("addField").activeFocus }, 2000, "Ctrl+N focuses the add field")
+    }
+
+    function test_ctrlNLeavesCompletedViewForAddableOne() {
+        clickNav("completed")
+        compare(find("addField").enabled, false)
+        keyClick(Qt.Key_N, Qt.ControlModifier)
+        tryCompare(find("viewTitle"), "text", "All Tasks")
+        tryVerify(function () { return find("addField").activeFocus }, 2000)
+    }
+
+    function test_extremeDatesAreHandled() {
+        seed("Dates")
+        let editor = openEditor()
+        const err = find("editorError")
+
+        // year 0001 is not representable the way the form parses it: refused, not mangled
+        find("editorDate").text = "0001-01-01"
+        mouseClick(find("editorSave"))
+        verify(err.text.indexOf("does not exist") >= 0, err.text)
+        compare(editor.visible, true)
+
+        // the far future is accepted and stored
+        find("editorDate").text = "9999-12-31"
+        find("editorTime").text = "10:00"
+        find("editorReminderDate").text = "9999-12-30"
+        find("editorReminderTime").text = "08:00"
+        mouseClick(find("editorSave"))
+        tryCompare(editor, "visible", false)
+        const t = fixture.stored()[0]
+        compare(t.dueAt.getFullYear(), 9999)
+        compare(t.reminderAt.getDate(), 30)
+        compare(find("errorBanner").visible, false)
+    }
 }
