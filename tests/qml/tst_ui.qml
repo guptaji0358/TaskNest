@@ -585,4 +585,52 @@ TestCase {
         const dp = del.mapToItem(r, 0, 0)
         verify(dp.x + del.width <= r.width + 0.5)
     }
+
+    // ---- polish ---------------------------------------------------------------------
+
+    function test_taskTurnsOverdueWhileWindowIsOpen() {
+        const soon = new Date(Date.now() + 1200)
+        verify(fixture.model.addTask("About to be late", "", "", 0, soon))
+        const text = find("dueText", row(0))
+        verify(text.text.indexOf("Overdue") < 0, "not overdue yet: " + text.text)
+        tryVerify(function () { return text.text.indexOf("Overdue") === 0 }, 4000, "turns overdue by itself")
+    }
+
+    function test_validationHintDoesNotShiftLayoutAndClearsOnViewChange() {
+        seed("A task")
+        const yBefore = find("taskList").mapToItem(view, 0, 0).y
+        addViaUi("   ")
+        compare(find("addMessage").visible, true)
+        compare(find("taskList").mapToItem(view, 0, 0).y, yBefore) // nothing moved
+        clickNav("completed")
+        compare(find("addMessage").visible, false) // stale hint is gone
+    }
+
+    function test_rowsAlignWithControlsEvenWhenScrolling() {
+        for (let i = 0; i < 30; ++i)
+            seed("Task " + i)
+        const column = find("contentColumn")
+        const cp = column.mapToItem(view, 0, 0)
+        const r = row(0)
+        const rp = r.mapToItem(view, 0, 0)
+        verify(find("taskList").contentHeight > find("taskList").height, "list scrolls")
+        verify(Math.abs((rp.x + r.width) - (cp.x + column.width)) <= 2)
+    }
+
+    function test_noMatchesUsesNeutralToken() {
+        seed("Something")
+        find("searchField").text = "qqq"
+        const empty = find("emptyState")
+        compare(empty.visible, true)
+        compare(empty.accented, false)
+        find("searchField").text = ""
+        fixture.reset()
+    }
+
+    function test_longTitleOpensAtItsStart() {
+        seed("An extremely long task title that certainly does not fit on one line of the editor field at all")
+        openEditor()
+        compare(find("editorTitle").cursorPosition, 0)
+        mouseClick(find("editorCancel"))
+    }
 }

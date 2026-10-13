@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 
 // Text button with an optional leading icon.
-// variant: primary (lime) | secondary | ghost | success | danger
+// variant: primary (solid lime) | tonal (soft lime) | secondary | ghost | success | danger
 Button {
     id: control
 
@@ -15,6 +15,7 @@ Button {
             return Theme.textFaint
         switch (variant) {
         case "primary": return Theme.accentText
+        case "tonal": return Theme.accent
         case "success": return Theme.success
         case "danger": return Theme.danger
         case "ghost": return Theme.textMuted
@@ -60,6 +61,7 @@ Button {
     background: Rectangle {
         radius: Theme.radiusSm
         border.width: control.visualFocus ? 2 : (control.variant === "secondary"
+                                                 || control.variant === "tonal"
                                                  || control.variant === "success"
                                                  || control.variant === "danger" ? 1 : 0)
         border.color: {
@@ -68,6 +70,7 @@ Button {
             switch (control.variant) {
             case "success": return Theme.successLine
             case "danger": return Theme.dangerLine
+            case "tonal": return Theme.accentLine
             default: return Theme.borderStrong
             }
         }
@@ -79,6 +82,8 @@ Button {
             switch (control.variant) {
             case "primary":
                 return down ? Theme.accentPressed : over ? Theme.accentHover : Theme.accent
+            case "tonal":
+                return down ? Theme.accentLine : over ? Qt.rgba(0.722, 0.949, 0.235, 0.22) : Theme.accentSoft
             case "success":
                 return down || over ? Theme.successLine : Theme.successSoft
             case "danger":

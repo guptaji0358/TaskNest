@@ -44,6 +44,7 @@ TNDialog {
         errorText = ""
         open()
         titleField.forceActiveFocus()
+        titleField.cursorPosition = 0 // long titles open scrolled to their start
     }
 
     // Parses a local date + optional time. Both blank means "none".

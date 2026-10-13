@@ -87,8 +87,12 @@ Item {
     readonly property bool canAdd:
         databaseOk && navKey !== "completed" && taskModel.completionFilter !== filterCompleted
 
+    // A hint about the add field makes no sense once it cannot be used.
+    onCanAddChanged: { if (!canAdd) addMessage = "" }
+
     function selectNav(item) {
         errorText = ""
+        addMessage = ""
         if (taskModel.setView(item.scope, item.list, item.completion))
             navKey = item.key
     }
@@ -149,6 +153,24 @@ Item {
         case "upcoming": return "Nothing coming up"
         case "completed": return "Nothing finished yet"
         default: return "Nothing here"
+        }
+    }
+
+    // Lime tick only for "all clear"; searches and filters get a neutral token.
+    function emptyAccented() {
+        return searchField.text.trim() === "" && navKey === "all"
+               && taskModel.completionFilter === filterAll
+    }
+
+    function emptyIcon() {
+        if (searchField.text.trim() !== "")
+            return "search"
+        switch (navKey) {
+        case "today": return "today"
+        case "upcoming": return "upcoming"
+        case "completed": return "completed"
+        case "all": return taskModel.completionFilter === filterAll ? "check" : "all"
+        default: return "list"
         }
     }
 
@@ -341,7 +363,7 @@ Item {
                     id: newTaskButton
                     objectName: "newTaskButton"
                     Layout.fillWidth: true
-                    variant: "primary"
+                    variant: "tonal"
                     iconName: "plus"
                     text: root.railMode ? "" : "New task"
                     leftPadding: root.railMode ? 0 : Theme.s4
@@ -542,10 +564,25 @@ Item {
                         Layout.fillWidth: true
                         iconName: "plus"
                         enabled: root.canAdd
+                        invalid: root.addMessage !== ""
                         placeholderText: root.canAdd ? "Add a task and press Enter   (Ctrl+N)"
                                                      : "Switch to another view to add tasks"
                         onAccepted: root.addTask()
                         onTextEdited: root.addMessage = ""
+
+                        // Shown inside the field so the list below never jumps.
+                        TNLabel {
+                            objectName: "addMessage"
+                            visible: root.addMessage !== ""
+                            text: root.addMessage
+                            role: "caption"
+                            color: Theme.danger
+                            font.weight: Font.Medium
+                            anchors.right: parent.right
+                            anchors.rightMargin: Theme.s3
+                            anchors.verticalCenter: parent.verticalCenter
+                            Accessible.role: Accessible.AlertMessage
+                        }
                     }
                     TNButton {
                         objectName: "addButton"
@@ -554,16 +591,6 @@ Item {
                         enabled: root.canAdd
                         onClicked: root.addTask()
                     }
-                }
-
-                TNLabel {
-                    objectName: "addMessage"
-                    Layout.fillWidth: true
-                    visible: root.addMessage !== ""
-                    text: root.addMessage
-                    role: "caption"
-                    color: Theme.danger
-                    Accessible.role: Accessible.AlertMessage
                 }
 
                 // Fired reminders (in-app notification; stays until handled).
@@ -627,6 +654,9 @@ Item {
                         id: taskList
                         objectName: "taskList"
                         anchors.fill: parent
+                        // The scrollbar lives in the right margin, so rows end
+                        // exactly where the controls above them end.
+                        anchors.rightMargin: -Theme.s5
                         clip: true
                         model: root.taskModel
                         boundsBehavior: Flickable.StopAtBounds
@@ -635,7 +665,7 @@ Item {
 
                         delegate: TaskRow {
                             // Full width, leaving room for the scrollbar only when it is shown.
-                            width: taskList.width - (taskList.contentHeight > taskList.height ? 12 : 0)
+                            width: taskList.width - Theme.s5
                             showList: root.currentNav.scope !== root.scopeList
                             compact: width < 640
                             onEditRequested: editor.openFor(model)
@@ -654,6 +684,8 @@ Item {
                         visible: root.taskModel && root.taskModel.count === 0
                         title: root.taskModel ? root.emptyTitle() : ""
                         text: root.taskModel ? root.emptyMessage() : ""
+                        iconName: root.taskModel ? root.emptyIcon() : "check"
+                        accented: root.taskModel ? root.emptyAccented() : true
                     }
                 }
             }

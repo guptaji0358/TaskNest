@@ -19,7 +19,10 @@ ItemDelegate {
     signal deleteRequested()
     signal completionToggled(bool completed)
 
-    readonly property var due: Theme.dueInfo(model.dueAt, model.completed)
+    // Bumped by the one-shot timer below when the due time passes, so a task
+    // turns "Overdue" while the window stays open (no polling).
+    property int tick: 0
+    readonly property var due: { row.tick; return Theme.dueInfo(model.dueAt, model.completed) }
     readonly property bool hasReminder: model.reminderAt !== undefined && model.reminderAt !== null
                                         && !isNaN(model.reminderAt.getTime()) && !model.reminderSent
     readonly property bool engaged: hoverHandler.hovered || visualFocus
@@ -39,6 +42,14 @@ ItemDelegate {
     onDoubleClicked: row.editRequested()
 
     HoverHandler { id: hoverHandler }
+
+    Timer {
+        repeat: false
+        running: row.due !== null && row.due.state !== "overdue" && row.due.state !== "done"
+        interval: row.due === null ? 1
+                  : Math.min(Math.max(row.model.dueAt.getTime() - Date.now(), 0) + 250, 2147483647)
+        onTriggered: row.tick++
+    }
 
     background: Rectangle {
         radius: Theme.radiusSm
@@ -168,6 +179,7 @@ ItemDelegate {
                 anchors.verticalCenter: parent.verticalCenter
             }
             TNLabel {
+                objectName: "dueText"
                 role: "caption"
                 text: row.due ? row.due.text : ""
                 color: row.due ? Theme.dueColor(row.due.state) : Theme.textMuted
@@ -196,7 +208,7 @@ ItemDelegate {
         Row {
             Layout.alignment: Qt.AlignVCenter
             spacing: 2
-            opacity: row.engaged ? 1 : 0.5
+            opacity: row.engaged ? 1 : 0.8
             Behavior on opacity { NumberAnimation { duration: Theme.durationFast } }
 
             TNIconButton {

@@ -7,6 +7,7 @@ TextField {
 
     property string iconName: ""
     property bool clearable: false
+    property bool invalid: false // danger outline (validation message shown by the caller)
     // "field" (boxed) | "title" (larger, for the task title)
     property string look: "field"
 
@@ -34,6 +35,7 @@ TextField {
         color: control.activeFocus ? Theme.surfaceRaised : (control.hovered ? Theme.surfaceHover : Theme.surfaceRaised)
         border.width: control.activeFocus ? 2 : 1
         border.color: !control.enabled ? Theme.border
+                      : control.invalid ? Theme.danger
                       : control.activeFocus ? Theme.focus
                       : control.hovered ? Theme.borderStrong : Theme.border
         opacity: control.enabled ? 1 : 0.55

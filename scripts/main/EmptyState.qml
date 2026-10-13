@@ -9,6 +9,8 @@ Item {
 
     property string title: ""
     property string text: ""
+    property string iconName: "check"
+    property bool accented: true // lime token (good news) vs neutral token
 
     implicitWidth: 360
     implicitHeight: column.implicitHeight
@@ -50,13 +52,15 @@ Item {
                 radius: 15
                 x: 45
                 y: 24
-                color: Theme.accent
+                color: root.accented ? Theme.accent : Theme.surfaceRaised
+                border.width: root.accented ? 0 : 1
+                border.color: Theme.borderStrong
                 Icon {
                     anchors.centerIn: parent
-                    name: "check"
+                    name: root.iconName
                     size: 18
                     strokeWidth: 2.4
-                    color: Theme.accentText
+                    color: root.accented ? Theme.accentText : Theme.textMuted
                 }
             }
         }

@@ -22,7 +22,7 @@ AbstractButton {
     ToolTip.delay: 300
 
     background: Rectangle {
-        radius: Theme.radiusSm + 2
+        radius: Theme.radiusSm
         color: control.active ? Theme.accentSoft
                : control.down ? Theme.surfaceRaised
                : control.hovered ? Theme.surfaceHover : "transparent"
