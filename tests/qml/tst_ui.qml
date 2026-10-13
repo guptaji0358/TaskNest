@@ -51,6 +51,12 @@ TestCase {
     }
     function storedTitles() { return fixture.stored().map(t => t.title) }
 
+    // Shortcuts only fire in the active window; make sure the test window is it.
+    function activateWindow() {
+        tc.Window.window.requestActivate()
+        tryVerify(function () { return tc.Window.window.active }, 3000, "test window active")
+    }
+
     function addViaUi(text) {
         const field = find("addField")
         field.forceActiveFocus()
@@ -290,7 +296,7 @@ TestCase {
         compare(titles(), ["today done", "finished"])
 
         clickNav("list:Inbox")
-        compare(titles(), ["today open", "today done", "yesterday", "finished"])
+        compare(titles(), ["yesterday", "today open", "today done", "finished"])
 
         clickNav("list:Work")
         compare(titles(), ["tomorrow"])
@@ -637,6 +643,7 @@ TestCase {
     // ---- reliability ----------------------------------------------------------------
 
     function test_keyboardShortcutsFocusSearchAndAdd() {
+        activateWindow()
         view.forceActiveFocus()
         keyClick(Qt.Key_F, Qt.ControlModifier)
         tryVerify(function () { return find("searchField").activeFocus }, 2000, "Ctrl+F focuses search")
@@ -645,6 +652,7 @@ TestCase {
     }
 
     function test_ctrlNLeavesCompletedViewForAddableOne() {
+        activateWindow()
         clickNav("completed")
         compare(find("addField").enabled, false)
         keyClick(Qt.Key_N, Qt.ControlModifier)
@@ -674,5 +682,147 @@ TestCase {
         compare(t.dueAt.getFullYear(), 9999)
         compare(t.reminderAt.getDate(), 30)
         compare(find("errorBanner").visible, false)
+    }
+
+    // ---- workflow: order, keyboard, safety -------------------------------------------
+
+    function test_listIsInWorkflowOrder() {
+        seed("undated")
+        seed("due later", "", dayAt(5, 10))
+        seed("due soon", "", dayAt(1, 10))
+        seed("finished early", "", dayAt(0, 8), true)
+        compare(titles(), ["due soon", "due later", "undated", "finished early"])
+
+        // completing a task from the UI moves it to the bottom
+        mouseClick(find("taskCheck", row(0)))
+        tryCompare(fixture.model, "count", 4)
+        // open tasks first (by due date), finished ones below (also by due date)
+        compare(titles(), ["due later", "undated", "finished early", "due soon"])
+    }
+
+    function test_downArrowEntersListAndMovesBetweenRows() {
+        seed("one"); seed("two"); seed("three")
+        find("searchField").forceActiveFocus()
+        keyClick(Qt.Key_Down)
+        tryVerify(function () { return row(0).activeFocus }, 2000, "first row focused")
+        keyClick(Qt.Key_Down)
+        tryVerify(function () { return row(1).activeFocus }, 2000, "second row focused")
+        keyClick(Qt.Key_Up)
+        tryVerify(function () { return row(0).activeFocus }, 2000)
+        keyClick(Qt.Key_Up) // above the first row: back to search
+        tryVerify(function () { return find("searchField").activeFocus }, 2000)
+    }
+
+    function test_spaceTogglesFocusedTask() {
+        seed("toggle me")
+        find("searchField").forceActiveFocus()
+        keyClick(Qt.Key_Down)
+        tryVerify(function () { return row(0).activeFocus }, 2000)
+        keyClick(Qt.Key_Space)
+        tryVerify(function () { return fixture.stored()[0].completed }, 2000, "completed by Space")
+        keyClick(Qt.Key_Space)
+        tryVerify(function () { return !fixture.stored()[0].completed }, 2000, "reopened by Space")
+    }
+
+    function test_viewShortcuts() {
+        activateWindow()
+        view.forceActiveFocus()
+        keyClick(Qt.Key_2, Qt.ControlModifier)
+        tryCompare(find("viewTitle"), "text", "Today")
+        keyClick(Qt.Key_3, Qt.ControlModifier)
+        tryCompare(find("viewTitle"), "text", "Upcoming")
+        keyClick(Qt.Key_4, Qt.ControlModifier)
+        tryCompare(find("viewTitle"), "text", "Completed")
+        keyClick(Qt.Key_5, Qt.ControlModifier)
+        tryCompare(find("viewTitle"), "text", "Inbox")
+        keyClick(Qt.Key_1, Qt.ControlModifier)
+        tryCompare(find("viewTitle"), "text", "All Tasks")
+    }
+
+    function test_shortcutReferenceOpensWithF1AndCloses() {
+        activateWindow()
+        view.forceActiveFocus()
+        keyClick(Qt.Key_F1)
+        const dialog = find("shortcutsDialog") || null
+        tryVerify(function () { return find("shortcutsClose") !== null && find("shortcutsClose").visible }, 2000)
+        mouseClick(find("shortcutsClose"))
+        tryVerify(function () { return find("shortcutsClose") === null || !find("shortcutsClose").visible }, 2000)
+    }
+
+    function test_doubleClickOnDeleteConfirmDeletesOnceWithoutError() {
+        seed("only once")
+        mouseClick(find("deleteButton", row(0)))
+        tryCompare(view.deleteConfirmDialog, "visible", true)
+        const confirm = find("deleteConfirm")
+        mouseClick(confirm)
+        mouseClick(confirm) // second click lands while the dialog is closing
+        tryCompare(view.deleteConfirmDialog, "visible", false)
+        compare(storedTitles(), [])
+        compare(find("errorBanner").visible, false)
+    }
+
+    function test_doubleClickOnSaveDoesNotError() {
+        seed("save twice")
+        const editor = openEditor()
+        find("editorTitle").text = "saved once"
+        const save = find("editorSave")
+        mouseClick(save)
+        mouseClick(save)
+        tryCompare(editor, "visible", false)
+        compare(storedTitles(), ["saved once"])
+        compare(find("errorBanner").visible, false)
+    }
+
+    function test_enterInNotesAddsNewlineAndCtrlEnterSaves() {
+        seed("notes task")
+        const editor = openEditor()
+        const notes = find("editorNotes")
+        notes.forceActiveFocus()
+        keyClick("a")
+        keyClick(Qt.Key_Return)          // plain Enter: a new line, not a save
+        keyClick("b")
+        compare(editor.visible, true)
+        compare(notes.text, "a\nb")
+
+        keyClick(Qt.Key_Return, Qt.ControlModifier) // Ctrl+Enter saves
+        tryCompare(editor, "visible", false)
+        compare(fixture.stored()[0].notes, "a\nb")
+    }
+
+    function test_escapeClosesEditorWithoutSaving() {
+        seed("keep this title")
+        const editor = openEditor()
+        find("editorTitle").text = "changed but cancelled"
+        find("editorTitle").forceActiveFocus()
+        keyClick(Qt.Key_Escape)
+        tryCompare(editor, "visible", false)
+        compare(storedTitles(), ["keep this title"])
+    }
+
+    function test_searchIgnoresCaseAndClearingRestoresEverything() {
+        seed(String.fromCharCode(0x00DC) + "ber uns")
+        seed("Plain task")
+        seed("Another")
+        find("searchField").text = String.fromCharCode(0x00FC) + "BER"
+        compare(rowCount(), 1)
+        find("searchField").text = "PLAIN"
+        compare(rowCount(), 1)
+        find("searchField").text = ""
+        compare(rowCount(), 3)
+    }
+
+    function test_filteringNeverChangesStoredTasks() {
+        seed("open one", "", dayAt(2, 9))
+        seed("done one", "", null, true)
+        const before = JSON.stringify(fixture.stored())
+        const filter = find("filterBox")
+        filter.currentIndex = 1; filter.activated(1)
+        find("searchField").text = "open"
+        clickNav("completed")
+        clickNav("today")
+        clickNav("upcoming")
+        find("searchField").text = ""
+        clickNav("all")
+        compare(JSON.stringify(fixture.stored()), before)
     }
 }

@@ -11,6 +11,10 @@ TNDialog {
 
     property var taskId: 0
     property string errorText: ""
+    property bool closing: false // true from the moment the dialog starts to hide
+
+    onAboutToShow: closing = false
+    onAboutToHide: closing = true
 
     title: "Edit task"
     width: Math.min(560, parent ? parent.width - 32 : 560)
@@ -76,6 +80,8 @@ TNDialog {
     }
 
     function save() {
+        if (closing || !visible)
+            return // a second click/Enter while the dialog is closing must not save twice
         errorText = ""
         if (titleField.text.trim() === "") {
             errorText = "A task title is required."
@@ -156,6 +162,14 @@ TNDialog {
                             selectedTextColor: Theme.accentText
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontBody
+                            // Enter keeps typing multi-line notes; Ctrl+Enter saves.
+                            Keys.onPressed: (event) => {
+                                if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                        && (event.modifiers & Qt.ControlModifier)) {
+                                    event.accepted = true
+                                    editor.save()
+                                }
+                            }
                             background: null
                             leftPadding: Theme.s3
                             rightPadding: Theme.s3

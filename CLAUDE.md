@@ -70,6 +70,14 @@ Rules:
 - `tests/` holds automated tests. They must use temporary database files, never the user's real database.
 - Do not create unnecessary directories or placeholder source files.
 
+## Task List Behavior
+
+- Default order (`Task::workflowLess`, mirrored by `TaskRepository::SortOrder::Workflow`): open tasks first; then earliest due date (undated last); then higher priority; then creation order. Changing the SQL or the comparator requires changing both.
+- The model updates incrementally: completing or re-timing a task *moves* its row; it never rebuilds the list.
+- Title search is a literal, Unicode case-insensitive substring match done in C++ (SQLite `LIKE` only folds ASCII). It composes with the view and the completion filter and never changes stored data.
+- Keyboard: Ctrl+N, Ctrl+F, Ctrl+1..5 (views), F1 (reference), Down/Up (search/add into the list, between rows), Space, Enter, Delete on a row, Ctrl+Enter to save from notes. Avoid shortcuts that collide with text editing.
+- Destructive or repeatable actions (delete confirm, editor save) ignore a second activation while their dialog is closing.
+
 ## Database Location and Safety
 
 - File name: `tasknest.db`. Chosen by `Database::defaultDatabasePath()` in this order:

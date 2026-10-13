@@ -25,6 +25,22 @@ struct Task
     QDateTime createdAt;
     QDateTime updatedAt;
 
+    // Display order: open tasks first; then earliest due date (undated last);
+    // then higher priority; then creation order. TaskRepository's
+    // SortOrder::Workflow SQL must stay equivalent to this.
+    static bool workflowLess(const Task &a, const Task &b)
+    {
+        if (a.completed != b.completed)
+            return !a.completed;
+        if (a.dueAt.has_value() != b.dueAt.has_value())
+            return a.dueAt.has_value();
+        if (a.dueAt && *a.dueAt != *b.dueAt)
+            return *a.dueAt < *b.dueAt;
+        if (a.priority != b.priority)
+            return a.priority > b.priority;
+        return a.id < b.id;
+    }
+
     static bool isValidPriority(int value) { return value >= kMinPriority && value <= kMaxPriority; }
 
     // Storage format for timestamps: ISO 8601 in UTC with milliseconds, which

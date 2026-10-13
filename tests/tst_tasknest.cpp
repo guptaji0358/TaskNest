@@ -632,7 +632,7 @@ private slots:
         QSignalSpy counts(&model, &TaskListModel::countChanged);
 
         QVERIFY(model.addTask("One"));
-        QVERIFY(model.addTask("Two", "notes", "Work", 1));
+        QVERIFY(model.addTask("Two", "notes", "Work", 0)); // same priority/no due date: appended
 
         QCOMPARE(inserted.size(), 2);
         QCOMPARE(inserted.at(1).at(1).toInt(), 1); // first == last == 1
@@ -677,11 +677,15 @@ private slots:
             QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
             QSignalSpy resets(&model, &QAbstractItemModel::modelReset);
             QSignalSpy removed(&model, &QAbstractItemModel::rowsRemoved);
+            QSignalSpy moved(&model, &QAbstractItemModel::rowsMoved);
             QVERIFY(model.setCompleted(idA, true));
             QCOMPARE(changed.size(), 1);
+            QCOMPARE(moved.size(), 1);   // finished tasks sink below the open ones
             QCOMPARE(resets.size(), 0);
             QCOMPARE(removed.size(), 0);
-            QVERIFY(model.data(model.index(0), TaskListModel::CompletedRole).toBool());
+            QVERIFY(!model.data(model.index(0), TaskListModel::CompletedRole).toBool()); // "b"
+            QVERIFY(model.data(model.index(1), TaskListModel::CompletedRole).toBool());  // "a"
+            QCOMPARE(model.data(model.index(1), TaskListModel::IdRole).toLongLong(), idA);
         }
 
         // With "active only" shown, completing a task removes its row.
@@ -1163,6 +1167,92 @@ private slots:
     }
 #endif
 
+    void repo_searchIsCaseInsensitiveBeyondAscii()
+    {
+        Database db;
+        QVERIFY(db.initialize(path("unicode.db")));
+        TaskRepository repo(db);
+
+        // U+00DC/U+00FC (U with diaeresis), U+00C4 (A with diaeresis), U+00C9/U+00E9 (E with acute)
+        const QString upperU(QChar(0x00DC)), lowerU(QChar(0x00FC));
+        const QString upperA(QChar(0x00C4)), upperE(QChar(0x00C9)), lowerE(QChar(0x00E9));
+
+        QVERIFY(repo.addTask(draft(upperU + "ber uns")));
+        QVERIFY(repo.addTask(draft(upperA + "pfel kaufen")));
+        QVERIFY(repo.addTask(draft(upperE + "COLE")));
+        QVERIFY(repo.addTask(draft("Plain ASCII")));
+
+        auto count = [&](const QString &needle) {
+            TaskRepository::Query query;
+            query.titleContains = needle;
+            QList<Task> found;
+            return repo.loadTasks(query, &found) ? found.size() : -1;
+        };
+        QCOMPARE(count(lowerU + "ber"), 1);              // lower-case needle finds upper-case title
+        QCOMPARE(count(upperA + "PFEL"), 1);
+        QCOMPARE(count(lowerE + "cole"), 1);
+        QCOMPARE(count("ascii"), 1);
+        QCOMPARE(count("PLAIN"), 1);
+        QCOMPARE(count("  plain  "), 1);                 // surrounding spaces ignored
+        QCOMPARE(count("nothing"), 0);
+        QCOMPARE(count(QString()), 4);                   // empty = everything
+    }
+
+    void model_defaultOrderIsOpenFirstThenDueThenPriority()
+    {
+        Database db;
+        QVERIFY(db.initialize(path("order.db")));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+        QVERIFY(model.refresh());
+
+        const QDateTime soon(QDate(2031, 1, 1), QTime(9, 0), QTimeZone::utc());
+        const QDateTime later(QDate(2031, 6, 1), QTime(9, 0), QTimeZone::utc());
+        QVERIFY(model.addTask("no date, low", "", "", 0));
+        QVERIFY(model.addTask("later", "", "", 0, later));
+        QVERIFY(model.addTask("soon", "", "", 0, soon));
+        QVERIFY(model.addTask("no date, high", "", "", 2));
+        QVERIFY(model.addTask("soon, high", "", "", 2, soon));
+
+        auto titles = [&]() {
+            QStringList result;
+            for (int row = 0; row < model.rowCount(); ++row)
+                result << model.data(model.index(row), TaskListModel::TitleRole).toString();
+            return result;
+        };
+        // due date ascending (undated last); same due date: higher priority first;
+        // otherwise creation order
+        QCOMPARE(titles(), (QStringList{"soon, high", "soon", "later", "no date, high", "no date, low"}));
+
+        // the same order comes back from the database after a reload
+        QVERIFY(model.refresh());
+        QCOMPARE(titles(), (QStringList{"soon, high", "soon", "later", "no date, high", "no date, low"}));
+
+        // completing moves a task below the open ones, with a move (not a rebuild)
+        QSignalSpy moved(&model, &QAbstractItemModel::rowsMoved);
+        QSignalSpy resets(&model, &QAbstractItemModel::modelReset);
+        const qint64 soonHighId = model.data(model.index(0), TaskListModel::IdRole).toLongLong();
+        QVERIFY(model.setCompleted(soonHighId, true));
+        QCOMPARE(moved.size(), 1);
+        QCOMPARE(resets.size(), 0);
+        QCOMPARE(titles(), (QStringList{"soon", "later", "no date, high", "no date, low", "soon, high"}));
+
+        // reopening puts it back where its due date and priority say
+        QVERIFY(model.setCompleted(soonHighId, false));
+        QCOMPARE(titles(), (QStringList{"soon, high", "soon", "later", "no date, high", "no date, low"}));
+
+        // editing the due date re-sorts
+        const qint64 laterId = model.data(model.index(2), TaskListModel::IdRole).toLongLong();
+        QVERIFY(model.updateTask(laterId, "later", "", "Inbox", 0, soon.addDays(-10)));
+        QCOMPARE(titles().first(), QString("later"));
+
+        // and a reload agrees with the incremental result
+        const QStringList incremental = titles();
+        QVERIFY(model.refresh());
+        QCOMPARE(titles(), incremental);
+    }
+
     // ---- views: due date ranges and lists ---------------------------------
 
     void repo_filtersByDueRangeAndList()
@@ -1229,9 +1319,16 @@ private slots:
         QVERIFY(model.addTask("tomorrow", "", "Work", 0, tomorrow));
         QVERIFY(model.addTask("yesterday", "", "Inbox", 0, yesterday));
         QVERIFY(model.addTask("no date", "", "Work"));
-        const qint64 doneId = model.data(model.index(1), TaskListModel::IdRole).toLongLong();
+        auto idOf = [&](const QString &title) {
+            for (int row = 0; row < model.rowCount(); ++row) {
+                if (model.data(model.index(row), TaskListModel::TitleRole).toString() == title)
+                    return model.data(model.index(row), TaskListModel::IdRole).toLongLong();
+            }
+            return qint64(-1);
+        };
+        const qint64 doneId = idOf("today done");
         QVERIFY(model.setCompleted(doneId, true));
-        const qint64 tomorrowId = model.data(model.index(2), TaskListModel::IdRole).toLongLong();
+        const qint64 tomorrowId = idOf("tomorrow");
 
         auto titles = [&]() {
             QStringList result;

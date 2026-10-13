@@ -84,6 +84,7 @@ TaskRepository::Query TaskListModel::effectiveQuery(const TaskRepository::Query 
                                                     Scope scope) const
 {
     TaskRepository::Query query = base;
+    query.sort = TaskRepository::SortOrder::Workflow;
     if (scope != List)
         query.listName.clear();
 
@@ -217,21 +218,40 @@ bool TaskListModel::applyChanged(const Task &task)
     }
 
     const int row = rowOfId(task.id);
+
+    // Where the task belongs among the other rows, in workflow order.
+    auto positionAmongOthers = [this, &task, row]() {
+        int position = 0;
+        for (int i = 0; i < m_tasks.size(); ++i) {
+            if (i != row && Task::workflowLess(m_tasks.at(i), task))
+                ++position;
+        }
+        return position;
+    };
+
     if (row >= 0 && matches) {
-        m_tasks[row] = task;
-        const QModelIndex index = this->index(row);
-        emit dataChanged(index, index);
+        const int target = positionAmongOthers();
+        if (target == row) {
+            m_tasks[row] = task;
+            const QModelIndex index = this->index(row);
+            emit dataChanged(index, index);
+        } else {
+            // Completion, due date or priority changed: the row moves.
+            const int destination = target > row ? target + 1 : target;
+            beginMoveRows(QModelIndex(), row, row, QModelIndex(), destination);
+            m_tasks.move(row, target);
+            endMoveRows();
+            m_tasks[target] = task;
+            const QModelIndex index = this->index(target);
+            emit dataChanged(index, index);
+        }
     } else if (row >= 0) {
         beginRemoveRows(QModelIndex(), row, row);
         m_tasks.removeAt(row);
         endRemoveRows();
         emit countChanged();
     } else if (matches) {
-        // Keep id order: new tasks append, edits to hidden tasks slot in.
-        const auto position = std::lower_bound(
-            m_tasks.begin(), m_tasks.end(), task.id,
-            [](const Task &existing, qint64 id) { return existing.id < id; });
-        const int insertRow = static_cast<int>(position - m_tasks.begin());
+        const int insertRow = positionAmongOthers();
         beginInsertRows(QModelIndex(), insertRow, insertRow);
         m_tasks.insert(insertRow, task);
         endInsertRows();

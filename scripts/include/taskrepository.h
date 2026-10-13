@@ -17,12 +17,17 @@ class TaskRepository
 {
 public:
     enum class CompletionFilter { All, Active, Completed };
+    enum class SortOrder {
+        Created,  // by id (creation order)
+        Workflow, // see Task::workflowLess()
+    };
 
     struct Query
     {
         std::optional<qint64> id;       // restrict to one task
         CompletionFilter completion = CompletionFilter::All;
-        QString titleContains;          // literal substring, case-insensitive for ASCII
+        QString titleContains;          // literal substring, Unicode case-insensitive
+        SortOrder sort = SortOrder::Created;
         QString listName;               // exact list name; empty = any list
         std::optional<QDateTime> dueFrom;   // due_at >= dueFrom (tasks without a due date never match)
         std::optional<QDateTime> dueBefore; // due_at <  dueBefore
@@ -31,7 +36,7 @@ public:
     // `database` must outlive the repository.
     explicit TaskRepository(Database &database);
 
-    // Tasks matching `query`, oldest (lowest id) first.
+    // Tasks matching `query`, in query.sort order (default: oldest first).
     bool loadTasks(const Query &query, QList<Task> *tasks);
     bool getTask(qint64 id, Task *task);
     // Distinct list names in use, sorted case-insensitively.

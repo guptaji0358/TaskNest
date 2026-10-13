@@ -18,6 +18,8 @@ ItemDelegate {
     signal editRequested()
     signal deleteRequested()
     signal completionToggled(bool completed)
+    signal focusNextRequested()
+    signal focusPreviousRequested()
 
     // Bumped by the one-shot timer below when the due time passes, so a task
     // turns "Overdue" while the window stays open (no polling).
@@ -37,6 +39,11 @@ ItemDelegate {
     focusPolicy: Qt.StrongFocus
     Accessible.name: model.title
 
+    // Keyboard: Up/Down move between rows, Space completes/reopens, Enter edits,
+    // Delete deletes (after confirmation).
+    Keys.onUpPressed: row.focusPreviousRequested()
+    Keys.onDownPressed: row.focusNextRequested()
+    Keys.onSpacePressed: row.completionToggled(!row.model.completed)
     Keys.onReturnPressed: row.editRequested()
     Keys.onDeletePressed: row.deleteRequested()
     onDoubleClicked: row.editRequested()

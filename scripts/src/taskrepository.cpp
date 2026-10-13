@@ -31,15 +31,6 @@ Task taskFromRow(const QSqlQuery &query)
     return task;
 }
 
-// Makes `text` match literally inside a LIKE pattern that uses ESCAPE '\'.
-QString escapeLike(QString text)
-{
-    text.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-    text.replace(QLatin1Char('%'), QStringLiteral("\\%"));
-    text.replace(QLatin1Char('_'), QStringLiteral("\\_"));
-    return text;
-}
-
 QVariant nowText()
 {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
@@ -118,15 +109,14 @@ bool TaskRepository::loadTasks(const Query &query, QList<Task> *tasks)
         bindings << Task::timestampToVariant(query.dueBefore);
     }
 
-    const QString needle = query.titleContains.trimmed();
-    if (!needle.isEmpty()) {
-        conditions << QStringLiteral("title LIKE ? ESCAPE '\\'");
-        bindings << QStringLiteral("%") + escapeLike(needle) + QStringLiteral("%");
-    }
-
     if (!conditions.isEmpty())
         sql += QStringLiteral(" WHERE ") + conditions.join(QStringLiteral(" AND "));
-    sql += QStringLiteral(" ORDER BY id ASC");
+    // Keep in step with Task::workflowLess(). Timestamps are fixed-width UTC
+    // text, so comparing them as text is comparing them chronologically.
+    sql += query.sort == SortOrder::Workflow
+               ? QStringLiteral(" ORDER BY completed ASC, (due_at IS NULL) ASC, due_at ASC, "
+                                "priority DESC, id ASC")
+               : QStringLiteral(" ORDER BY id ASC");
 
     QSqlDatabase db = m_database.connection();
     QSqlQuery select(db);
@@ -137,9 +127,18 @@ bool TaskRepository::loadTasks(const Query &query, QList<Task> *tasks)
     if (!select.exec())
         return fail(QStringLiteral("Cannot load tasks: %1").arg(select.lastError().text()));
 
+    // Title search is done here, not in SQL: SQLite's LIKE only folds ASCII
+    // case, so "\u00FCber" would not find "\u00DCber". QString does full case
+    // folding, and the needle is a plain substring (no wildcard characters).
+    const QString needle = query.titleContains.trimmed();
+
     QList<Task> result;
-    while (select.next())
-        result.append(taskFromRow(select));
+    while (select.next()) {
+        Task task = taskFromRow(select);
+        if (!needle.isEmpty() && !task.title.contains(needle, Qt::CaseInsensitive))
+            continue;
+        result.append(std::move(task));
+    }
     if (tasks)
         *tasks = result;
     return true;

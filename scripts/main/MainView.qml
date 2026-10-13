@@ -106,6 +106,26 @@ Item {
         addField.forceActiveFocus()
     }
 
+    // Moves keyboard focus to a task row (or back to search above the first).
+    function focusRow(index) {
+        if (index < 0) {
+            searchField.forceActiveFocus()
+            return
+        }
+        if (index >= taskList.count)
+            return
+        taskList.currentIndex = index
+        taskList.positionViewAtIndex(index, ListView.Contain)
+        const item = taskList.itemAtIndex(index)
+        if (item)
+            item.forceActiveFocus()
+    }
+
+    function focusList() {
+        if (taskList.count > 0)
+            focusRow(Math.max(taskList.currentIndex, 0))
+    }
+
     function addTask() {
         errorText = ""
         const title = addField.text.trim()
@@ -263,6 +283,37 @@ Item {
         sequence: "Ctrl+F"
         enabled: root.databaseOk
         onActivated: searchField.forceActiveFocus()
+    }
+    Shortcut {
+        sequence: "F1"
+        enabled: root.databaseOk
+        onActivated: shortcutsDialog.open()
+    }
+    // Ctrl+1..5: All Tasks, Today, Upcoming, Completed, Inbox
+    Shortcut {
+        sequence: "Ctrl+1"
+        enabled: root.databaseOk
+        onActivated: root.selectNav(root.navItems[0])
+    }
+    Shortcut {
+        sequence: "Ctrl+2"
+        enabled: root.databaseOk
+        onActivated: root.selectNav(root.navItems[1])
+    }
+    Shortcut {
+        sequence: "Ctrl+3"
+        enabled: root.databaseOk
+        onActivated: root.selectNav(root.navItems[2])
+    }
+    Shortcut {
+        sequence: "Ctrl+4"
+        enabled: root.databaseOk
+        onActivated: root.selectNav(root.navItems[3])
+    }
+    Shortcut {
+        sequence: "Ctrl+5"
+        enabled: root.databaseOk
+        onActivated: root.selectNav(root.navItems[4])
     }
 
     Rectangle {
@@ -443,6 +494,12 @@ Item {
                         HoverHandler { id: dbPathHover }
                     }
                     TNIconButton {
+                        objectName: "shortcutsButton"
+                        iconName: "keyboard"
+                        tip: "Keyboard shortcuts (F1)"
+                        onClicked: shortcutsDialog.open()
+                    }
+                    TNIconButton {
                         visible: root.width >= Theme.railBreakpoint
                         Layout.alignment: Qt.AlignHCenter
                         iconName: "panel"
@@ -536,6 +593,7 @@ Item {
                         placeholderText: "Search tasks   (Ctrl+F)"
                         onTextChanged: root.taskModel.searchText = text
                         Keys.onEscapePressed: clear()
+                        Keys.onDownPressed: root.focusList()
                     }
                     TNComboBox {
                         id: filterBox
@@ -569,6 +627,7 @@ Item {
                                                      : "Switch to another view to add tasks"
                         onAccepted: root.addTask()
                         onTextEdited: root.addMessage = ""
+                        Keys.onDownPressed: root.focusList()
 
                         // Shown inside the field so the list below never jumps.
                         TNLabel {
@@ -670,6 +729,8 @@ Item {
                             compact: width < 640
                             onEditRequested: editor.openFor(model)
                             onDeleteRequested: root.askDelete(model)
+                            onFocusNextRequested: root.focusRow(index + 1)
+                            onFocusPreviousRequested: root.focusRow(index - 1)
                             onCompletionToggled: (completed) => {
                                 root.errorText = ""
                                 root.taskModel.setCompleted(model.id, completed)
@@ -706,11 +767,81 @@ Item {
     }
 
     TNDialog {
+        id: shortcutsDialog
+        objectName: "shortcutsDialog"
+        title: "Keyboard shortcuts"
+        width: Math.min(460, parent ? parent.width - 32 : 460)
+
+        readonly property var entries: [
+            { keys: "Ctrl+N", what: "New task (focus the add field)" },
+            { keys: "Ctrl+F", what: "Search tasks" },
+            { keys: "Ctrl+1 \u2013 5", what: "All Tasks, Today, Upcoming, Completed, Inbox" },
+            { keys: "\u2193 / \u2191", what: "From search or add: into the list; between tasks" },
+            { keys: "Space", what: "Complete or reopen the focused task" },
+            { keys: "Enter", what: "Edit the focused task (or add, in the add field)" },
+            { keys: "Delete", what: "Delete the focused task (asks first)" },
+            { keys: "Ctrl+Enter", what: "Save, while editing notes" },
+            { keys: "Esc", what: "Close a dialog without saving; clear search" },
+            { keys: "F1", what: "This list" }
+        ]
+
+        contentItem: ColumnLayout {
+            spacing: Theme.s2
+
+            Repeater {
+                model: shortcutsDialog.entries
+                delegate: RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    spacing: Theme.s3
+
+                    Rectangle {
+                        Layout.preferredWidth: 116
+                        implicitHeight: 26
+                        radius: Theme.radiusSm
+                        color: Theme.surfaceRaised
+                        border.color: Theme.borderStrong
+                        TNLabel {
+                            anchors.centerIn: parent
+                            role: "caption"
+                            font.weight: Font.DemiBold
+                            text: modelData.keys
+                        }
+                    }
+                    TNLabel {
+                        Layout.fillWidth: true
+                        role: "label"
+                        color: Theme.text
+                        wrapMode: Text.Wrap
+                        text: modelData.what
+                    }
+                }
+            }
+        }
+
+        footer: Item {
+            implicitHeight: 64
+            TNButton {
+                objectName: "shortcutsClose"
+                anchors.right: parent.right
+                anchors.rightMargin: Theme.s5
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Close"
+                onClicked: shortcutsDialog.close()
+            }
+        }
+    }
+
+    TNDialog {
         id: deleteDialog
         objectName: "deleteDialog"
 
         property var taskId: 0
         property string taskTitle: ""
+        property bool closing: false
+
+        onAboutToShow: closing = false
+        onAboutToHide: closing = true
 
         title: "Delete task?"
         width: Math.min(420, parent ? parent.width - 32 : 420)
@@ -746,6 +877,11 @@ Item {
                     iconName: "trash"
                     text: "Delete"
                     onClicked: {
+                        // A second click while the dialog is closing must not
+                        // delete again (it would report "not found").
+                        if (deleteDialog.closing || !deleteDialog.visible)
+                            return
+                        deleteDialog.closing = true
                         root.errorText = ""
                         root.taskModel.removeTask(deleteDialog.taskId)
                         deleteDialog.close()
