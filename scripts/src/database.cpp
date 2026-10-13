@@ -58,6 +58,37 @@ bool createSchemaV1(QSqlDatabase &db, QString *error)
                         error);
 }
 
+// v2: tasks table. Timestamps are ISO 8601 UTC text, so they sort correctly.
+bool createSchemaV2(QSqlDatabase &db, QString *error)
+{
+    const QStringList statements = {
+        QStringLiteral("CREATE TABLE IF NOT EXISTS tasks ("
+                       "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                       "title TEXT NOT NULL CHECK (length(trim(title)) > 0), "
+                       "notes TEXT NOT NULL DEFAULT '', "
+                       "list_name TEXT NOT NULL DEFAULT 'Inbox', "
+                       "priority INTEGER NOT NULL DEFAULT 0 CHECK (priority BETWEEN 0 AND 2), "
+                       "due_at TEXT, "
+                       "completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)), "
+                       "reminder_at TEXT, "
+                       "reminder_sent INTEGER NOT NULL DEFAULT 0 CHECK (reminder_sent IN (0, 1)), "
+                       "created_at TEXT NOT NULL, "
+                       "updated_at TEXT NOT NULL)"),
+        // Due-date views/sorting only ever look at tasks that have a due date.
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_tasks_due_at "
+                       "ON tasks (due_at) WHERE due_at IS NOT NULL"),
+        // Reminder scheduling needs "next unsent reminder of an open task".
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_tasks_reminder_pending "
+                       "ON tasks (reminder_at) "
+                       "WHERE reminder_at IS NOT NULL AND reminder_sent = 0 AND completed = 0"),
+    };
+    for (const QString &statement : statements) {
+        if (!runStatement(db, statement, error))
+            return false;
+    }
+    return true;
+}
+
 bool writeSchemaVersion(QSqlDatabase &db, int version, QString *error)
 {
     {
@@ -96,6 +127,16 @@ bool verifySchema(QSqlDatabase &db, int expectedVersion, QString *error)
                          .arg(query.value(0).toString())
                          .arg(expectedVersion);
         return false;
+    }
+
+    if (expectedVersion >= 2) {
+        QSqlQuery tables(db);
+        if (!tables.exec(QStringLiteral("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"))
+            || !tables.next()) {
+            if (error)
+                *error = QStringLiteral("Schema verification failed: tasks table is missing");
+            return false;
+        }
     }
     return true;
 }
@@ -227,7 +268,9 @@ bool Database::migrate()
         bool ok = true;
         if (version < 1)
             ok = createSchemaV1(db, &error);
-        // Future migrations: `if (ok && version < 2) ok = migrateToV2(db, &error);`
+        if (ok && version < 2)
+            ok = createSchemaV2(db, &error);
+        // Future migrations: `if (ok && version < 3) ok = createSchemaV3(db, &error);`
         if (ok)
             ok = writeSchemaVersion(db, kSchemaVersion, &error);
 
@@ -247,6 +290,11 @@ bool Database::migrate()
 
     m_schemaVersion = kSchemaVersion;
     return true;
+}
+
+QSqlDatabase Database::connection() const
+{
+    return QSqlDatabase::database(m_connectionName, false);
 }
 
 void Database::closeConnection()

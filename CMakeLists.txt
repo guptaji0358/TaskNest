@@ -11,10 +11,28 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 Sql)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
+# Data layer (database, tasks), shared by the application and the tests.
+qt_add_library(tasknestcore STATIC
+    scripts/src/database.cpp
+    scripts/src/taskrepository.cpp
+    scripts/src/tasklistmodel.cpp
+    scripts/include/database.h
+    scripts/include/task.h
+    scripts/include/taskrepository.h
+    scripts/include/tasklistmodel.h
+)
+
+target_include_directories(tasknestcore PUBLIC
+    "${CMAKE_SOURCE_DIR}/scripts/include"
+)
+
+target_link_libraries(tasknestcore PUBLIC
+    Qt6::Core
+    Qt6::Sql
+)
+
 qt_add_executable(appTaskNest
     scripts/main/main.cpp
-    scripts/src/database.cpp
-    scripts/include/database.h
 )
 
 set_target_properties(appTaskNest PROPERTIES
@@ -33,12 +51,14 @@ qt_add_qml_module(appTaskNest
         scripts/main/Main.qml
 )
 
-target_include_directories(appTaskNest PRIVATE
-    "${CMAKE_SOURCE_DIR}/scripts/include"
-)
-
 target_link_libraries(appTaskNest PRIVATE
+    tasknestcore
     Qt6::Quick
     Qt6::QuickControls2
-    Qt6::Sql
 )
+
+option(TASKNEST_BUILD_TESTS "Build the TaskNest automated tests" ON)
+if(TASKNEST_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

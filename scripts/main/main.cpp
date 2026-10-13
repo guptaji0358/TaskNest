@@ -4,22 +4,35 @@
 #include <QQmlApplicationEngine>
 
 #include "database.h"
+#include "tasklistmodel.h"
+#include "taskrepository.h"
 
 int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("TaskNest"));
 
-    // Declared after `app` so it is destroyed (connection removed) first.
+    // Declared after `app` and in dependency order, so they are destroyed in
+    // reverse: model, repository, then the connection.
     Database database;
     const bool databaseReady = database.initialize();
-    if (!databaseReady)
-        qCritical().noquote() << "Database initialization failed:" << database.lastError();
+    TaskRepository repository(database);
+    TaskListModel taskModel(repository);
+
+    QString startupError = databaseReady ? QString() : database.lastError();
+    if (databaseReady && !taskModel.refresh())
+        startupError = taskModel.lastError();
+    if (!startupError.isEmpty())
+        qCritical().noquote() << "Startup failed:" << startupError;
 
     QQmlApplicationEngine engine;
+    QQmlEngine::setObjectOwnership(&taskModel, QQmlEngine::CppOwnership);
     engine.setInitialProperties({
-        {QStringLiteral("databaseError"), databaseReady ? QString() : database.lastError()},
+        {QStringLiteral("databaseError"), startupError},
         {QStringLiteral("databasePath"), QDir::toNativeSeparators(database.databasePath())},
+        // No model when the database is unusable: no task operations are possible.
+        {QStringLiteral("taskModel"),
+         QVariant::fromValue<QObject *>(startupError.isEmpty() ? &taskModel : nullptr)},
     });
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreationFailed,

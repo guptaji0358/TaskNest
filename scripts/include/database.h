@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QSqlDatabase>
 #include <QString>
 
 // Owns the application's single named SQLite connection (Qt SQL, QSQLITE).
@@ -12,7 +13,7 @@ class Database
 {
 public:
     // Version written to PRAGMA user_version and app_metadata('schema_version').
-    static constexpr int kSchemaVersion = 1;
+    static constexpr int kSchemaVersion = 2;
 
     explicit Database(const QString &connectionName = QStringLiteral("tasknest_main"));
     ~Database();
@@ -33,6 +34,10 @@ public:
     QString lastError() const { return m_lastError; }
     QString connectionName() const { return m_connectionName; }
     int schemaVersion() const { return m_schemaVersion; }
+
+    // The open connection, for the data-layer classes (e.g. TaskRepository).
+    // Keep the returned handle short-lived: it must be gone before shutdown().
+    QSqlDatabase connection() const;
 
     // Resolves where the database should live. On failure returns an empty
     // string and, if given, fills *error.

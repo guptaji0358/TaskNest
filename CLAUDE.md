@@ -50,6 +50,7 @@ TaskNest/
 │   ├── src/        # .cpp implementation files with a matching header in include/
 │   ├── include/    # .h/.hpp headers matching files in src/
 │   └── main/       # main.cpp and other entry points without a matching project header
+└── tests/          # Qt Test suites (built by default; run tst_tasknest from the build dir)
 ```
 
 Rules:
@@ -60,6 +61,7 @@ Rules:
 - The folder is named `scripts` but is not limited to executable scripts; follow the conventions above.
 - Existing top-level folders such as `resources/` (Qt resource file `app.qrc`, Windows resource file `app.rc`) and `Assets/` are intentional project assets; keep them and add to them only where appropriate.
 - `.gitkeep` files are placeholders; remove one once its directory contains real files.
+- `tests/` holds automated tests. They must use temporary database files, never the user's real database.
 - Do not create unnecessary directories or placeholder source files.
 
 ## Coding Standards
