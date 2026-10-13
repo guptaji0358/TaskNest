@@ -69,6 +69,16 @@ Rules:
 - `tests/` holds automated tests. They must use temporary database files, never the user's real database.
 - Do not create unnecessary directories or placeholder source files.
 
+## UI Design System
+
+- Every color, size, radius, spacing step and duration comes from `scripts/main/Theme.qml` (a QML singleton). Do not hard-code them in other QML files.
+- Visual direction: graphite surfaces with a cool undertone, one electric-lime accent (actions and the active state only), violet for reminders, amber/red only for time pressure and errors. Urgency is always conveyed by an icon and words as well as color.
+- Reusable components are prefixed `TN` (`TNButton`, `TNTextField`, `TNComboBox`, `TNDialog`, ...) plus `Icon` (vector line icons from `Theme.icons`), `TaskRow`, `NavItem`, `TaskCheck`, `ReminderBanner`, `EmptyState`. Build screens from these rather than styling stock controls inline.
+- `scripts/main/qmldir` lists every component so the UI tests can load the QML straight from the source folder; add new components to it **and** to `QML_FILES` in `CMakeLists.txt`.
+- Do not name a property `onX` where `X` is another property of the same item: QML reads it as that property's change handler (e.g. `accentText`, not `onAccent`).
+- Animations are short (`Theme.durationFast/Base`) and are turned off when Windows animation effects are disabled.
+- Keep `objectName`s that the UI tests use (see `tests/qml/`).
+
 ## Coding Standards
 
 - C++17 or newer; prefer standard library facilities and Qt idioms (parent-child ownership, signals/slots).

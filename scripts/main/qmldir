@@ -1,0 +1,17 @@
+module TaskNest
+singleton Theme 1.0 Theme.qml
+Icon 1.0 Icon.qml
+TNLabel 1.0 TNLabel.qml
+TNButton 1.0 TNButton.qml
+TNIconButton 1.0 TNIconButton.qml
+TNTextField 1.0 TNTextField.qml
+TNComboBox 1.0 TNComboBox.qml
+TNScrollBar 1.0 TNScrollBar.qml
+TNDialog 1.0 TNDialog.qml
+TaskCheck 1.0 TaskCheck.qml
+NavItem 1.0 NavItem.qml
+TaskRow 1.0 TaskRow.qml
+ReminderBanner 1.0 ReminderBanner.qml
+EmptyState 1.0 EmptyState.qml
+TaskEditor 1.0 TaskEditor.qml
+MainView 1.0 MainView.qml

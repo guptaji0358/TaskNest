@@ -9,13 +9,17 @@ ApplicationWindow {
     required property string databasePath
     required property var taskModel // null when the database is unavailable
     property var reminderScheduler: null
+    property bool reducedMotion: false // Windows "animation effects" off
 
-    width: 1000
-    height: 680
+    width: 1040
+    height: 700
     minimumWidth: 800
     minimumHeight: 520
     visible: true
     title: "TaskNest"
+    color: Theme.bg
+
+    Component.onCompleted: Theme.reducedMotion = reducedMotion
 
     MainView {
         anchors.fill: parent

@@ -42,10 +42,7 @@ TestCase {
         tryVerify(function () { return find("taskList").itemAtIndex(i) !== null })
         return find("taskList").itemAtIndex(i)
     }
-    function rowCount() {
-        waitForRendering(view)
-        return find("taskList").count
-    }
+    function rowCount() { return find("taskList").count }
     function titles() {
         const result = []
         for (let i = 0; i < fixture.model.count; ++i)
@@ -577,12 +574,13 @@ TestCase {
         const list = find("taskList")
         const field = find("addField")
         const r = row(0)
-        const fp = field.mapToItem(view, 0, 0)
+        const column = find("contentColumn")
+        const cp = column.mapToItem(view, 0, 0)
         const rp = r.mapToItem(view, 0, 0)
         verify(list.width > 900, "list grows with the window")
-        // rows line up with the controls above them (same right edge, within the scrollbar gutter)
-        verify(Math.abs((rp.x + r.width) - (fp.x + field.width + find("addButton").width + 8)) <= 2,
-               "row right edge " + (rp.x + r.width) + " vs controls " + (fp.x + field.width + find("addButton").width + 8))
+        // rows line up with the column above them (same right edge)
+        verify(Math.abs((rp.x + r.width) - (cp.x + column.width)) <= 2,
+               "row right edge " + (rp.x + r.width) + " vs column " + (cp.x + column.width))
         const del = find("deleteButton", r)
         const dp = del.mapToItem(r, 0, 0)
         verify(dp.x + del.width <= r.width + 0.5)

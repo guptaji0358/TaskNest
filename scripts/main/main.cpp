@@ -4,6 +4,10 @@
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 #include "database.h"
 #include "reminderscheduler.h"
 #include "tasklistmodel.h"
@@ -13,7 +17,8 @@ int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("TaskNest"));
-    QQuickStyle::setStyle(QStringLiteral("Fusion")); // desktop look; follows the system palette
+    // Basic is the neutral base for the custom TaskNest controls (see Theme.qml).
+    QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     // Declared after `app` and in dependency order, so they are destroyed in
     // reverse: model, repository, then the connection.
@@ -43,12 +48,21 @@ int main(int argc, char *argv[])
         reminders.reschedule(); // announces overdue reminders, arms the timer
     }
 
+    // Honor Windows "Show animations in Windows" being switched off.
+    bool reducedMotion = false;
+#ifdef Q_OS_WIN
+    BOOL animationsOn = TRUE;
+    if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animationsOn, 0))
+        reducedMotion = !animationsOn;
+#endif
+
     QQmlApplicationEngine engine;
     QQmlEngine::setObjectOwnership(&taskModel, QQmlEngine::CppOwnership);
     QQmlEngine::setObjectOwnership(&reminders, QQmlEngine::CppOwnership);
     engine.setInitialProperties({
         {QStringLiteral("databaseError"), startupError},
         {QStringLiteral("databasePath"), QDir::toNativeSeparators(database.databasePath())},
+        {QStringLiteral("reducedMotion"), reducedMotion},
         {QStringLiteral("reminderScheduler"),
          QVariant::fromValue<QObject *>(startupError.isEmpty() ? &reminders : nullptr)},
         // No model when the database is unusable: no task operations are possible.

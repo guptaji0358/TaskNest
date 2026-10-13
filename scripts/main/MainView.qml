@@ -3,7 +3,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 // The task interface. All data access goes through `taskModel`
-// (TaskListModel); nothing here touches SQL.
+// (TaskListModel); nothing here touches SQL. Styling comes from Theme and
+// the TN* components.
 Item {
     id: root
 
@@ -30,34 +31,46 @@ Item {
     readonly property alias editorDialog: editor
     readonly property alias deleteConfirmDialog: deleteDialog
 
-    // Explicit accent colors: the system "highlight" role can be near-black.
-    readonly property color accent: "#2f6fd0"
-    readonly property color textOnAccent: "white"
-    readonly property color outline: Qt.rgba(palette.windowText.r, palette.windowText.g,
-                                             palette.windowText.b, 0.45)
-
     property string navKey: "all"
     property string errorText: ""   // last model error, shown in the banner
     property string addMessage: ""  // validation message under the add field
+    property bool forceRail: false  // user collapsed the sidebar
+    // Narrow windows always get the icon rail so navigation stays reachable.
+    readonly property bool railMode: forceRail || width < Theme.railBreakpoint
+
+    // Controls inherit this palette, so anything not styled explicitly
+    // (selection, tooltips, popups) still matches the theme.
+    palette.window: Theme.bg
+    palette.windowText: Theme.text
+    palette.base: Theme.surfaceRaised
+    palette.text: Theme.text
+    palette.button: Theme.surfaceRaised
+    palette.buttonText: Theme.text
+    palette.highlight: Theme.accent
+    palette.highlightedText: Theme.accentText
+    palette.toolTipBase: Theme.elevated
+    palette.toolTipText: Theme.text
+    palette.mid: Theme.borderStrong
+    palette.dark: Theme.border
 
     // Sidebar entries: fixed views, then the lists found in the data.
     readonly property var navItems: {
         const items = [
-            { key: "all", label: "All Tasks", scope: scopeEverything, list: "", completion: filterAll },
-            { key: "today", label: "Today", scope: scopeToday, list: "", completion: filterAll },
-            { key: "upcoming", label: "Upcoming", scope: scopeUpcoming, list: "", completion: filterActive },
-            { key: "completed", label: "Completed", scope: scopeEverything, list: "", completion: filterCompleted },
-            { key: "list:Inbox", label: "Inbox", scope: scopeList, list: "Inbox", completion: filterAll }
+            { key: "all", label: "All Tasks", icon: "all", scope: scopeEverything, list: "", completion: filterAll },
+            { key: "today", label: "Today", icon: "today", scope: scopeToday, list: "", completion: filterAll },
+            { key: "upcoming", label: "Upcoming", icon: "upcoming", scope: scopeUpcoming, list: "", completion: filterActive },
+            { key: "completed", label: "Completed", icon: "completed", scope: scopeEverything, list: "", completion: filterCompleted },
+            { key: "list:Inbox", label: "Inbox", icon: "inbox", scope: scopeList, list: "Inbox", completion: filterAll }
         ]
         const names = taskModel ? taskModel.listNames : []
         let custom = []
         for (let i = 0; i < names.length; ++i) {
             if (names[i] !== "Inbox")
-                custom.push({ key: "list:" + names[i], label: names[i], scope: scopeList,
-                              list: names[i], completion: filterAll })
+                custom.push({ key: "list:" + names[i], label: names[i], icon: "list",
+                              scope: scopeList, list: names[i], completion: filterAll })
         }
         if (custom.length > 0)
-            items.push({ key: "header", label: "LISTS", header: true })
+            items.push({ key: "header", label: "Lists", header: true })
         return items.concat(custom)
     }
 
@@ -78,6 +91,15 @@ Item {
         errorText = ""
         if (taskModel.setView(item.scope, item.list, item.completion))
             navKey = item.key
+    }
+
+    // Focuses the add field, leaving a view that cannot take new tasks first.
+    function focusAdd() {
+        if (!databaseOk)
+            return
+        if (!canAdd)
+            selectNav(navItems[0])
+        addField.forceActiveFocus()
     }
 
     function addTask() {
@@ -105,6 +127,29 @@ Item {
             if (searchField.text !== "")
                 searchField.clear() // otherwise the new task could be hidden
         } // on failure the banner shows the error and the text is kept
+    }
+
+    function subtitle() {
+        switch (navKey) {
+        case "all": return "Everything on your plate"
+        case "today": return Qt.formatDate(new Date(), "dddd, d MMMM")
+        case "upcoming": return "Open tasks due after today"
+        case "completed": return "Finished work"
+        case "list:Inbox": return "The default home for new tasks"
+        default: return "Custom list"
+        }
+    }
+
+    function emptyTitle() {
+        if (searchField.text.trim() !== "")
+            return "No matches"
+        switch (navKey) {
+        case "all": return taskModel.completionFilter === filterAll ? "A clean slate" : "Nothing here"
+        case "today": return "Nothing due today"
+        case "upcoming": return "Nothing coming up"
+        case "completed": return "Nothing finished yet"
+        default: return "Nothing here"
+        }
     }
 
     function emptyMessage() {
@@ -189,8 +234,8 @@ Item {
 
     Shortcut {
         sequence: "Ctrl+N"
-        enabled: root.canAdd
-        onActivated: addField.forceActiveFocus()
+        enabled: root.databaseOk
+        onActivated: root.focusAdd()
     }
     Shortcut {
         sequence: "Ctrl+F"
@@ -198,25 +243,38 @@ Item {
         onActivated: searchField.forceActiveFocus()
     }
 
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.bg
+    }
+
     // ---- database unavailable -------------------------------------------
     ColumnLayout {
         visible: !root.databaseOk
         anchors.centerIn: parent
-        width: Math.min(parent.width - 64, 640)
-        spacing: 12
+        width: Math.min(parent.width - 64, 560)
+        spacing: Theme.s4
 
-        Label {
+        Rectangle {
             Layout.alignment: Qt.AlignHCenter
-            text: "TaskNest"
-            font.pixelSize: 40
-            font.bold: true
+            width: 56
+            height: 56
+            radius: 18
+            color: Theme.dangerSoft
+            border.color: Theme.dangerLine
+            Icon { anchors.centerIn: parent; name: "warning"; size: 26; color: Theme.danger }
         }
-        Label {
+        TNLabel {
+            Layout.alignment: Qt.AlignHCenter
+            role: "heading"
+            text: "TaskNest can’t open its database"
+        }
+        TNLabel {
             objectName: "unavailableMessage"
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
-            color: "#c62828"
+            color: Theme.danger
             text: "Database unavailable. Your data has not been modified.\n" + root.databaseError
             Accessible.role: Accessible.AlertMessage
         }
@@ -228,24 +286,73 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // Sidebar
+        // Sidebar / rail
         Rectangle {
-            Layout.preferredWidth: 210
+            id: sidebar
+            Layout.preferredWidth: root.railMode ? Theme.railWidth : Theme.sidebarWidth
             Layout.fillHeight: true
-            // Slightly offset from the window color; avoids accent-tinted palette roles.
-            color: Qt.darker(root.palette.window, 1.12)
+            color: Theme.sidebar
+            Behavior on Layout.preferredWidth { NumberAnimation { duration: Theme.durationBase; easing.type: Easing.OutCubic } }
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 12
-                spacing: 8
+                anchors.margins: root.railMode ? Theme.s2 + 2 : Theme.s3 + 2
+                anchors.topMargin: Theme.s4
+                spacing: Theme.s1
 
-                Label {
-                    text: "TaskNest"
-                    font.pixelSize: 22
-                    font.bold: true
-                    Layout.leftMargin: 6
+                // Wordmark: a lime tile holding a nest, then "Task" + "Nest".
+                Item {
+                    Layout.fillWidth: true
+                    implicitHeight: 38
+
+                    Rectangle {
+                        id: logoTile
+                        width: 34
+                        height: 34
+                        radius: 11
+                        color: Theme.accent
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: root.railMode ? (parent.width - width) / 2 : Theme.s2
+                        Icon {
+                            anchors.centerIn: parent
+                            name: "nest"
+                            size: 22
+                            strokeWidth: 2.2
+                            color: Theme.accentText
+                        }
+                    }
+                    TNLabel {
+                        visible: !root.railMode
+                        anchors.left: logoTile.right
+                        anchors.leftMargin: Theme.s3
+                        anchors.verticalCenter: parent.verticalCenter
+                        textFormat: Text.StyledText
+                        text: "Task<font color=\"" + Theme.accent + "\">Nest</font>"
+                        font.family: Theme.displayFamily
+                        font.pixelSize: 22
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: -0.2
+                    }
                 }
+
+                Item { implicitHeight: Theme.s2 }
+
+                TNButton {
+                    id: newTaskButton
+                    objectName: "newTaskButton"
+                    Layout.fillWidth: true
+                    variant: "primary"
+                    iconName: "plus"
+                    text: root.railMode ? "" : "New task"
+                    leftPadding: root.railMode ? 0 : Theme.s4
+                    rightPadding: root.railMode ? 0 : Theme.s4
+                    Accessible.name: "New task (Ctrl+N)"
+                    ToolTip.visible: hovered && root.railMode
+                    ToolTip.text: "New task (Ctrl+N)"
+                    onClicked: root.focusAdd()
+                }
+
+                Item { implicitHeight: Theme.s2 }
 
                 ListView {
                     id: navList
@@ -253,51 +360,73 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
+                    spacing: 0
+                    boundsBehavior: Flickable.StopAtBounds
                     model: root.navItems
-                    delegate: ItemDelegate {
-                        id: navDelegate
+                    ScrollBar.vertical: TNScrollBar {}
+
+                    delegate: Item {
+                        id: navEntry
                         required property var modelData
-                        objectName: "nav_" + modelData.key
                         width: ListView.view.width
-                        text: modelData.label
-                        enabled: !modelData.header
-                        highlighted: modelData.key === root.navKey
-                        font.pixelSize: modelData.header ? 11 : 14
-                        font.bold: modelData.header === true
-                        topPadding: modelData.header ? 14 : 6
-                        bottomPadding: 6
-                        background: Rectangle {
-                            radius: 4
-                            color: navDelegate.highlighted ? root.accent
-                                   : navDelegate.hovered ? Qt.rgba(root.palette.windowText.r,
-                                                                   root.palette.windowText.g,
-                                                                   root.palette.windowText.b, 0.08)
-                                                         : "transparent"
-                            border.color: root.accent
-                            border.width: navDelegate.visualFocus ? 2 : 0
+                        height: modelData.header ? (root.railMode ? 14 : 32) : 36
+
+                        TNLabel {
+                            visible: navEntry.modelData.header === true && !root.railMode
+                            role: "overline"
+                            text: navEntry.modelData.label
+                            x: Theme.s3 + 2
+                            anchors.bottom: parent.bottom
+                            anchors.bottomMargin: Theme.s2
                         }
-                        contentItem: Label {
-                            text: navDelegate.text
-                            font: navDelegate.font
-                            color: navDelegate.highlighted ? root.textOnAccent
-                                                           : root.palette.windowText
-                            opacity: navDelegate.modelData.header ? 0.6 : 1
-                            elide: Text.ElideRight
-                            verticalAlignment: Text.AlignVCenter
+                        Rectangle {
+                            visible: navEntry.modelData.header === true && root.railMode
+                            height: 1
+                            color: Theme.border
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.leftMargin: Theme.s3
+                            anchors.rightMargin: Theme.s3
+                            anchors.verticalCenter: parent.verticalCenter
                         }
-                        onClicked: root.selectNav(modelData)
+                        NavItem {
+                            visible: navEntry.modelData.header !== true
+                            objectName: "nav_" + navEntry.modelData.key
+                            anchors.fill: parent
+                            iconName: navEntry.modelData.icon || ""
+                            label: navEntry.modelData.label
+                            active: navEntry.modelData.key === root.navKey
+                            collapsed: root.railMode
+                            onClicked: root.selectNav(navEntry.modelData)
+                        }
                     }
                 }
 
-                Label {
+                // footer: where the data lives, and the collapse toggle
+                RowLayout {
                     Layout.fillWidth: true
-                    text: root.databasePath
-                    elide: Text.ElideMiddle
-                    font.pixelSize: 10
-                    opacity: 0.55
-                    ToolTip.visible: dbPathHover.hovered
-                    ToolTip.text: "Database: " + root.databasePath
-                    HoverHandler { id: dbPathHover }
+                    Layout.fillHeight: false
+                    spacing: Theme.s2
+
+                    TNLabel {
+                        visible: !root.railMode
+                        Layout.fillWidth: true
+                        role: "caption"
+                        text: root.databasePath
+                        elide: Text.ElideMiddle
+                        color: Theme.textFaint
+                        font.pixelSize: 11
+                        ToolTip.visible: dbPathHover.hovered
+                        ToolTip.text: "Database: " + root.databasePath
+                        HoverHandler { id: dbPathHover }
+                    }
+                    TNIconButton {
+                        visible: root.width >= Theme.railBreakpoint
+                        Layout.alignment: Qt.AlignHCenter
+                        iconName: "panel"
+                        tip: root.forceRail ? "Expand sidebar" : "Collapse sidebar"
+                        onClicked: root.forceRail = !root.forceRail
+                    }
                 }
             }
         }
@@ -305,315 +434,227 @@ Item {
         Rectangle {
             Layout.preferredWidth: 1
             Layout.fillHeight: true
-            color: root.palette.mid
-            opacity: 0.5
+            color: Theme.border
         }
 
-        // Content
-        ColumnLayout {
+        // Workspace
+        Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.margins: 20
-            spacing: 12
+            color: Theme.surface
 
-            RowLayout {
-                Layout.fillWidth: true
-                Label {
-                    objectName: "viewTitle"
-                    text: root.currentNav.label
-                    font.pixelSize: 26
-                    font.bold: true
+            ColumnLayout {
+                id: contentColumn
+                objectName: "contentColumn"
+                anchors.fill: parent
+                anchors.leftMargin: Theme.s6
+                anchors.rightMargin: Theme.s6
+                anchors.topMargin: Theme.s5 + 4
+                anchors.bottomMargin: Theme.s3
+                spacing: Theme.s3
+
+                // heading
+                RowLayout {
                     Layout.fillWidth: true
-                    elide: Text.ElideRight
-                }
-                Label {
-                    objectName: "taskCount"
-                    text: root.taskModel ? root.taskModel.count + (root.taskModel.count === 1 ? " task" : " tasks") : ""
-                    opacity: 0.65
-                }
-            }
+                    Layout.fillHeight: false
+                    spacing: Theme.s3
 
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
 
-                TextField {
-                    id: searchField
-                    objectName: "searchField"
-                    Layout.fillWidth: true
-                    placeholderText: "Search tasks (Ctrl+F)"
-                    selectByMouse: true
-                    onTextChanged: root.taskModel.searchText = text
-                    Keys.onEscapePressed: clear()
-                }
-                ComboBox {
-                    id: filterBox
-                    objectName: "filterBox"
-                    Layout.preferredWidth: 130
-                    model: ["All", "Active", "Completed"]
-                    enabled: !root.completionFilterLocked
-                    currentIndex: root.taskModel ? root.taskModel.completionFilter : 0
-                    onActivated: (index) => {
-                        root.errorText = ""
-                        root.taskModel.completionFilter = index
-                    }
-                    Accessible.name: "Completion filter"
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-
-                TextField {
-                    id: addField
-                    objectName: "addField"
-                    Layout.fillWidth: true
-                    enabled: root.canAdd
-                    placeholderText: root.canAdd ? "Add a task and press Enter (Ctrl+N)"
-                                                 : "Switch to another view to add tasks"
-                    selectByMouse: true
-                    onAccepted: root.addTask()
-                    onTextEdited: root.addMessage = ""
-                }
-                Button {
-                    objectName: "addButton"
-                    text: "Add Task"
-                    highlighted: true
-                    enabled: root.canAdd
-                    onClicked: root.addTask()
-                }
-            }
-
-            Label {
-                objectName: "addMessage"
-                Layout.fillWidth: true
-                visible: root.addMessage !== ""
-                text: root.addMessage
-                color: "#c62828"
-                Accessible.role: Accessible.AlertMessage
-            }
-
-            // Fired reminders (in-app notification; stays until handled).
-            Repeater {
-                model: reminders
-                delegate: Rectangle {
-                    id: reminderBanner
-                    required property var model
-                    objectName: "reminderBanner"
-                    Layout.fillWidth: true
-                    implicitHeight: reminderRow.implicitHeight + 16
-                    radius: 4
-                    color: root.accent
-
-                    RowLayout {
-                        id: reminderRow
-                        anchors.fill: parent
-                        anchors.margins: 8
-                        spacing: 8
-                        Label {
-                            objectName: "reminderText"
+                        TNLabel {
+                            objectName: "viewTitle"
+                            role: "display"
+                            text: root.currentNav.label
                             Layout.fillWidth: true
                             elide: Text.ElideRight
-                            color: root.textOnAccent
-                            font.bold: true
-                            text: "Reminder: " + reminderBanner.model.title + "  ("
-                                  + Qt.formatDateTime(reminderBanner.model.when, "ddd d MMM, HH:mm") + ")"
+                        }
+                        TNLabel {
+                            objectName: "viewSubtitle"
+                            role: "caption"
+                            text: root.subtitle()
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.alignment: Qt.AlignTop
+                        implicitWidth: countLabel.implicitWidth + 20
+                        implicitHeight: 26
+                        radius: 13
+                        color: Theme.surfaceRaised
+                        border.color: Theme.border
+                        TNLabel {
+                            id: countLabel
+                            objectName: "taskCount"
+                            anchors.centerIn: parent
+                            role: "caption"
+                            font.weight: Font.Medium
+                            text: root.taskModel
+                                  ? root.taskModel.count + (root.taskModel.count === 1 ? " task" : " tasks") : ""
+                        }
+                    }
+                }
+
+                // search + filter
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: false
+                    Layout.topMargin: Theme.s1
+                    spacing: Theme.s2
+
+                    TNTextField {
+                        id: searchField
+                        objectName: "searchField"
+                        Layout.fillWidth: true
+                        iconName: "search"
+                        clearable: true
+                        placeholderText: "Search tasks   (Ctrl+F)"
+                        onTextChanged: root.taskModel.searchText = text
+                        Keys.onEscapePressed: clear()
+                    }
+                    TNComboBox {
+                        id: filterBox
+                        objectName: "filterBox"
+                        Layout.preferredWidth: 150
+                        model: ["All", "Active", "Completed"]
+                        enabled: !root.completionFilterLocked
+                        currentIndex: root.taskModel ? root.taskModel.completionFilter : 0
+                        onActivated: (index) => {
+                            root.errorText = ""
+                            root.taskModel.completionFilter = index
+                        }
+                        Accessible.name: "Completion filter"
+                    }
+                }
+
+                // add a task
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: false
+                    spacing: Theme.s2
+
+                    TNTextField {
+                        id: addField
+                        objectName: "addField"
+                        Layout.fillWidth: true
+                        iconName: "plus"
+                        enabled: root.canAdd
+                        placeholderText: root.canAdd ? "Add a task and press Enter   (Ctrl+N)"
+                                                     : "Switch to another view to add tasks"
+                        onAccepted: root.addTask()
+                        onTextEdited: root.addMessage = ""
+                    }
+                    TNButton {
+                        objectName: "addButton"
+                        variant: "primary"
+                        text: "Add task"
+                        enabled: root.canAdd
+                        onClicked: root.addTask()
+                    }
+                }
+
+                TNLabel {
+                    objectName: "addMessage"
+                    Layout.fillWidth: true
+                    visible: root.addMessage !== ""
+                    text: root.addMessage
+                    role: "caption"
+                    color: Theme.danger
+                    Accessible.role: Accessible.AlertMessage
+                }
+
+                // Fired reminders (in-app notification; stays until handled).
+                Repeater {
+                    model: reminders
+                    delegate: ReminderBanner {
+                        id: reminderBanner
+                        required property var model
+                        objectName: "reminderBanner"
+                        Layout.fillWidth: true
+                        title: reminderBanner.model.title
+                        when: reminderBanner.model.when
+                        onCompleteClicked: root.dismissReminder(reminderBanner.model.taskId, true)
+                        onDismissClicked: root.dismissReminder(reminderBanner.model.taskId, false)
+                    }
+                }
+
+                // Operation errors from the model/database.
+                Rectangle {
+                    objectName: "errorBanner"
+                    Layout.fillWidth: true
+                    visible: root.errorText !== ""
+                    implicitHeight: errorRow.implicitHeight + 16
+                    radius: Theme.radiusMd
+                    color: Theme.dangerSoft
+                    border.color: Theme.dangerLine
+
+                    RowLayout {
+                        id: errorRow
+                        anchors.fill: parent
+                        anchors.leftMargin: Theme.s3
+                        anchors.rightMargin: Theme.s2
+                        anchors.topMargin: 8
+                        anchors.bottomMargin: 8
+                        spacing: Theme.s3
+
+                        Icon { name: "warning"; size: 18; color: Theme.danger; Layout.alignment: Qt.AlignTop }
+                        TNLabel {
+                            objectName: "errorBannerText"
+                            Layout.fillWidth: true
+                            text: root.errorText
+                            wrapMode: Text.Wrap
                             Accessible.role: Accessible.AlertMessage
                         }
-                        Button {
-                            objectName: "reminderComplete"
-                            text: "Complete"
-                            onClicked: root.dismissReminder(reminderBanner.model.taskId, true)
-                        }
-                        Button {
-                            objectName: "reminderDismiss"
+                        TNButton {
+                            objectName: "dismissBanner"
+                            variant: "ghost"
                             text: "Dismiss"
-                            onClicked: root.dismissReminder(reminderBanner.model.taskId, false)
-                        }
-                    }
-                }
-            }
-
-            // Operation errors from the model/database.
-            Rectangle {
-                objectName: "errorBanner"
-                Layout.fillWidth: true
-                visible: root.errorText !== ""
-                implicitHeight: bannerRow.implicitHeight + 16
-                radius: 4
-                color: "#fdecea"
-                border.color: "#c62828"
-
-                RowLayout {
-                    id: bannerRow
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    Label {
-                        objectName: "errorBannerText"
-                        Layout.fillWidth: true
-                        text: root.errorText
-                        color: "#7f1d1d"
-                        wrapMode: Text.Wrap
-                        Accessible.role: Accessible.AlertMessage
-                    }
-                    Button {
-                        objectName: "dismissBanner"
-                        text: "Dismiss"
-                        flat: true
-                        onClicked: root.errorText = ""
-                    }
-                }
-            }
-
-            // Task list
-            Item {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-
-                ListView {
-                    id: taskList
-                    objectName: "taskList"
-                    anchors.fill: parent
-                    clip: true
-                    spacing: 2
-                    model: root.taskModel
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: ScrollBar {}
-
-                    delegate: ItemDelegate {
-                        id: row
-                        required property var model
-                        required property int index
-                        objectName: "taskRow"
-                        // Full width, leaving room for the scrollbar only when it is shown.
-                        width: taskList.width - (taskList.contentHeight > taskList.height ? 14 : 0)
-                        readonly property bool hasDue: model.dueAt !== undefined && model.dueAt !== null
-                                                       && !isNaN(model.dueAt.getTime())
-                        // Self-contained (does not rely on hasDue being re-evaluated first).
-                        readonly property bool overdue: !model.completed
-                                                        && model.dueAt !== undefined
-                                                        && model.dueAt !== null
-                                                        && model.dueAt.getTime() < Date.now()
-
-                        onDoubleClicked: editor.openFor(row.model)
-                        Keys.onReturnPressed: editor.openFor(row.model)
-                        Keys.onDeletePressed: root.askDelete(row.model)
-
-                        contentItem: RowLayout {
-                            spacing: 10
-
-                            CheckBox {
-                                id: check
-                                objectName: "taskCheck"
-                                checked: row.model.completed
-                                indicator: Rectangle {
-                                    implicitWidth: 20
-                                    implicitHeight: 20
-                                    x: check.leftPadding
-                                    y: (check.height - height) / 2
-                                    radius: 3
-                                    color: check.checked ? root.accent : "transparent"
-                                    border.color: check.visualFocus || check.checked
-                                                  ? root.accent : root.outline
-                                    border.width: check.visualFocus ? 2 : 1
-                                    Label {
-                                        anchors.centerIn: parent
-                                        visible: check.checked
-                                        text: "✓"
-                                        font.bold: true
-                                        color: root.textOnAccent
-                                    }
-                                }
-                                Accessible.name: "Completed: " + row.model.title
-                                onToggled: {
-                                    root.errorText = ""
-                                    root.taskModel.setCompleted(row.model.id, checked)
-                                    // Follow the stored value, whether or not the write succeeded.
-                                    checked = Qt.binding(() => row.model.completed)
-                                }
-                            }
-
-                            Label {
-                                objectName: "taskTitle"
-                                Layout.fillWidth: true
-                                text: row.model.title
-                                elide: Text.ElideRight
-                                font.pixelSize: 15
-                                font.strikeout: row.model.completed
-                                opacity: row.model.completed ? 0.5 : 1
-                            }
-
-                            Rectangle {
-                                objectName: "priorityBadge"
-                                visible: row.model.priority > 0
-                                implicitWidth: priorityLabel.implicitWidth + 12
-                                implicitHeight: priorityLabel.implicitHeight + 4
-                                radius: 3
-                                color: row.model.priority === 2 ? "#c62828" : "#b26a00"
-                                opacity: row.model.completed ? 0.5 : 1
-                                Label {
-                                    id: priorityLabel
-                                    anchors.centerIn: parent
-                                    text: row.model.priority === 2 ? "High" : "Medium"
-                                    color: "white"
-                                    font.pixelSize: 11
-                                    font.bold: true
-                                }
-                            }
-
-                            Label {
-                                objectName: "dueLabel"
-                                visible: row.hasDue
-                                text: {
-                                    if (!row.hasDue)
-                                        return ""
-                                    const d = row.model.dueAt
-                                    const dateOnly = d.getHours() === 23 && d.getMinutes() === 59
-                                    return Qt.formatDate(d, "ddd d MMM yyyy")
-                                           + (dateOnly ? "" : ", " + Qt.formatTime(d, "HH:mm"))
-                                }
-                                color: row.overdue ? "#c62828" : row.palette.windowText
-                                opacity: row.overdue ? 1 : 0.65
-                                font.pixelSize: 12
-                            }
-
-                            Label {
-                                objectName: "reminderLabel"
-                                readonly property var at: row.model.reminderAt
-                                visible: at !== undefined && at !== null && !isNaN(at.getTime())
-                                         && !row.model.reminderSent
-                                text: visible ? "\u23F0 " + Qt.formatDateTime(at, "d MMM, HH:mm") : ""
-                                font.pixelSize: 12
-                                opacity: 0.65
-                            }
-
-                            ToolButton {
-                                objectName: "editButton"
-                                text: "Edit"
-                                onClicked: editor.openFor(row.model)
-                                Accessible.name: "Edit task: " + row.model.title
-                            }
-                            ToolButton {
-                                objectName: "deleteButton"
-                                text: "Delete"
-                                onClicked: root.askDelete(row.model)
-                                Accessible.name: "Delete task: " + row.model.title
-                            }
+                            implicitHeight: 30
+                            onClicked: root.errorText = ""
                         }
                     }
                 }
 
-                Label {
-                    objectName: "emptyState"
-                    anchors.centerIn: parent
-                    width: Math.min(parent.width - 40, 420)
-                    visible: root.taskModel && root.taskModel.count === 0
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.Wrap
-                    opacity: 0.6
-                    font.pixelSize: 15
-                    text: root.taskModel ? root.emptyMessage() : ""
+                // Task list
+                Item {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+
+                    ListView {
+                        id: taskList
+                        objectName: "taskList"
+                        anchors.fill: parent
+                        clip: true
+                        model: root.taskModel
+                        boundsBehavior: Flickable.StopAtBounds
+                        keyNavigationEnabled: true
+                        ScrollBar.vertical: TNScrollBar {}
+
+                        delegate: TaskRow {
+                            // Full width, leaving room for the scrollbar only when it is shown.
+                            width: taskList.width - (taskList.contentHeight > taskList.height ? 12 : 0)
+                            showList: root.currentNav.scope !== root.scopeList
+                            compact: width < 640
+                            onEditRequested: editor.openFor(model)
+                            onDeleteRequested: root.askDelete(model)
+                            onCompletionToggled: (completed) => {
+                                root.errorText = ""
+                                root.taskModel.setCompleted(model.id, completed)
+                            }
+                        }
+                    }
+
+                    EmptyState {
+                        objectName: "emptyState"
+                        anchors.centerIn: parent
+                        width: Math.min(parent.width - 40, 420)
+                        visible: root.taskModel && root.taskModel.count === 0
+                        title: root.taskModel ? root.emptyTitle() : ""
+                        text: root.taskModel ? root.emptyMessage() : ""
+                    }
                 }
             }
         }
@@ -632,38 +673,53 @@ Item {
         taskModel: root.taskModel
     }
 
-    Dialog {
+    TNDialog {
         id: deleteDialog
         objectName: "deleteDialog"
+
         property var taskId: 0
         property string taskTitle: ""
 
         title: "Delete task?"
-        modal: true
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        width: Math.min(400, parent ? parent.width - 32 : 400)
+        width: Math.min(420, parent ? parent.width - 32 : 420)
 
-        contentItem: Label {
+        onOpened: deleteCancel.forceActiveFocus() // the safe choice is the default
+
+        contentItem: TNLabel {
             wrapMode: Text.Wrap
+            color: Theme.textMuted
             text: "“" + deleteDialog.taskTitle + "” will be permanently deleted. "
-                  + "This cannot be undone."
+                  + "This can’t be undone."
         }
-        footer: DialogButtonBox {
-            Button {
-                objectName: "deleteConfirm"
-                text: "Delete"
-                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+
+        footer: Item {
+            implicitHeight: 64
+
+            Row {
+                anchors.right: parent.right
+                anchors.rightMargin: Theme.s5
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Theme.s2
+
+                TNButton {
+                    id: deleteCancel
+                    objectName: "deleteCancel"
+                    variant: "ghost"
+                    text: "Cancel"
+                    onClicked: deleteDialog.close()
+                }
+                TNButton {
+                    objectName: "deleteConfirm"
+                    variant: "danger"
+                    iconName: "trash"
+                    text: "Delete"
+                    onClicked: {
+                        root.errorText = ""
+                        root.taskModel.removeTask(deleteDialog.taskId)
+                        deleteDialog.close()
+                    }
+                }
             }
-            Button {
-                objectName: "deleteCancel"
-                text: "Cancel"
-                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
-            }
-        }
-        onAccepted: {
-            root.errorText = ""
-            root.taskModel.removeTask(taskId)
         }
     }
 }

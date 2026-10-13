@@ -61,13 +61,30 @@ endforeach()
 # Generate qmldir files for QML living outside the source root (scripts/main).
 qt_policy(SET QTP0004 NEW)
 
+# Theme is the design-system singleton shared by every component.
+set_source_files_properties(scripts/main/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
 qt_add_qml_module(appTaskNest
     URI TaskNest
     VERSION 1.0
     QML_FILES
-        scripts/main/Main.qml
-        scripts/main/MainView.qml
+        scripts/main/Theme.qml
+        scripts/main/Icon.qml
+        scripts/main/TNLabel.qml
+        scripts/main/TNButton.qml
+        scripts/main/TNIconButton.qml
+        scripts/main/TNTextField.qml
+        scripts/main/TNComboBox.qml
+        scripts/main/TNScrollBar.qml
+        scripts/main/TNDialog.qml
+        scripts/main/TaskCheck.qml
+        scripts/main/NavItem.qml
+        scripts/main/TaskRow.qml
+        scripts/main/ReminderBanner.qml
+        scripts/main/EmptyState.qml
         scripts/main/TaskEditor.qml
+        scripts/main/MainView.qml
+        scripts/main/Main.qml
 )
 
 target_link_libraries(appTaskNest PRIVATE

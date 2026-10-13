@@ -106,7 +106,7 @@ private:
 
 int main(int argc, char **argv)
 {
-    qputenv("QT_QUICK_CONTROLS_STYLE", "Fusion"); // same style as the application
+    qputenv("QT_QUICK_CONTROLS_STYLE", "Basic"); // same style as the application
     Setup setup;
     return quick_test_main_with_setup(argc, argv, "tasknest_ui", QUICK_TEST_SOURCE_DIR, &setup);
 }
