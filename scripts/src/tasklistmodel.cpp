@@ -261,7 +261,7 @@ bool TaskListModel::applyChanged(const Task &task)
 }
 
 bool TaskListModel::addTask(const QString &title, const QString &notes, const QString &listName,
-                            int priority, const QDateTime &dueAt)
+                            int priority, const QDateTime &dueAt, const QDateTime &reminderAt)
 {
     Task draft;
     draft.title = title;
@@ -271,6 +271,8 @@ bool TaskListModel::addTask(const QString &title, const QString &notes, const QS
     draft.priority = priority;
     if (dueAt.isValid())
         draft.dueAt = dueAt;
+    if (reminderAt.isValid())
+        draft.reminderAt = reminderAt;
 
     Task created;
     if (!m_repository.addTask(draft, &created))
@@ -325,8 +327,20 @@ bool TaskListModel::setCompleted(qint64 id, bool completed)
 
 bool TaskListModel::removeTask(qint64 id)
 {
+    // Take the snapshot first: it is what "Undo" puts back.
+    Task snapshot;
+    const int snapshotRow = rowOfId(id);
+    const bool haveSnapshot = snapshotRow >= 0
+        ? (snapshot = m_tasks.at(snapshotRow), true)
+        : m_repository.getTask(id, &snapshot);
+
     if (!m_repository.deleteTask(id))
         return reportRepositoryError();
+
+    if (haveSnapshot) {
+        m_undo = snapshot;
+        emit undoChanged();
+    }
 
     const int row = rowOfId(id);
     if (row >= 0) {
@@ -338,4 +352,28 @@ bool TaskListModel::removeTask(qint64 id)
     refreshListNames();
     emit tasksMutated();
     return true;
+}
+
+bool TaskListModel::undoDelete()
+{
+    if (!m_undo)
+        return reportError(QStringLiteral("There is nothing to undo."));
+
+    Task restored;
+    if (!m_repository.restoreTask(*m_undo, &restored))
+        return reportRepositoryError(); // snapshot kept: the caller may retry
+
+    // Consume the snapshot before touching the view so a second Undo cannot
+    // restore twice.
+    m_undo.reset();
+    emit undoChanged();
+    return applyChanged(restored);
+}
+
+void TaskListModel::discardUndo()
+{
+    if (!m_undo)
+        return;
+    m_undo.reset();
+    emit undoChanged();
 }

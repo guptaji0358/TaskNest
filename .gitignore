@@ -102,6 +102,7 @@ qmlcache_*.cpp
 *.db-journal
 *.db-wal
 *.db-shm
+*.lock
 
 # ---- OS files ----
 Thumbs.db

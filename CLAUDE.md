@@ -78,6 +78,12 @@ Rules:
 - Keyboard: Ctrl+N, Ctrl+F, Ctrl+1..5 (views), F1 (reference), Down/Up (search/add into the list, between rows), Space, Enter, Delete on a row, Ctrl+Enter to save from notes. Avoid shortcuts that collide with text editing.
 - Destructive or repeatable actions (delete confirm, editor save) ignore a second activation while their dialog is closing.
 
+## Quick Add, Undo Delete and Single Instance
+
+- **Quick Add:** the add row is still "type a title, press Enter". The chevron beside Add task (or Ctrl+Shift+N) opens a details panel: priority, list, due date/time, reminder date/time and a one-line note. Details go through the same `TaskListModel::addTask` -> repository -> scheduler path, so reminders are scheduled by the add itself. Invalid dates are refused with the form left intact; a repeat click/Enter right after a successful add is ignored. There is deliberately no free-text syntax (`tomorrow !high`).
+- **Undo delete:** after a delete a notice offers Undo for 8 seconds (Ctrl+Z works while it shows and you are not typing). The model keeps **one** in-memory snapshot (the latest delete). Restoring re-inserts the same row with its **original id**, created/updated times and reminder state (`TaskRepository::restoreTask`; AUTOINCREMENT never reuses ids, and an occupied id is refused, not overwritten). A failed undo keeps the snapshot for a retry. The snapshot is discarded when the notice expires or is replaced, and is lost if the app exits first; nothing is written to disk for undo.
+- **Single instance:** `SingleInstanceGuard` holds a `QLockFile` named `<database>.lock` beside the database (so separate portable copies do not block each other). A second launch brings the running window forward (Win32) and exits with code 0 without showing a UI. `QLockFile` removes a lock whose owner process no longer exists, so a crash or kill never blocks the next start; a live owner's lock is never treated as stale. If the lock file cannot be created at all (permissions), TaskNest still starts and the database layer reports the real problem. Lock files are git-ignored (`*.lock`).
+
 ## Database Location and Safety
 
 - File name: `tasknest.db`. Chosen by `Database::defaultDatabasePath()` in this order:
@@ -88,7 +94,7 @@ Rules:
 - The active path is shown in the sidebar footer (tooltip: full path).
 - Upgrading an existing database first copies it to `tasknest.db.v<N>.bak` (once per source version, byte-identical). If the copy cannot be made, the upgrade is not attempted and the database is left untouched.
 - Do not keep the live database in a folder that a cloud-sync client (OneDrive, Dropbox) is syncing: SQLite files and sync conflicts do not mix. The development checkout lives under OneDrive, so keep copies of `out/bin/data/` if the data matters.
-- Only one TaskNest instance should use a database at a time (there is no single-instance guard yet).
+- Only one TaskNest instance can use a database at a time (see Single Instance above).
 - Tests must use temporary databases; never point a test at `out/bin/data/`.
 
 ## UI Design System

@@ -8,6 +8,8 @@ TNTextField 1.0 TNTextField.qml
 TNComboBox 1.0 TNComboBox.qml
 TNScrollBar 1.0 TNScrollBar.qml
 TNDialog 1.0 TNDialog.qml
+TNToast 1.0 TNToast.qml
+QuickAddPanel 1.0 QuickAddPanel.qml
 TaskCheck 1.0 TaskCheck.qml
 NavItem 1.0 NavItem.qml
 TaskRow 1.0 TaskRow.qml

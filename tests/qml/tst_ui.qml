@@ -52,9 +52,15 @@ TestCase {
     function storedTitles() { return fixture.stored().map(t => t.title) }
 
     // Shortcuts only fire in the active window; make sure the test window is it.
+    // If another application owns the foreground (a person is using the
+    // machine), the test is skipped visibly instead of failing spuriously.
     function activateWindow() {
+        tc.Window.window.raise()
         tc.Window.window.requestActivate()
-        tryVerify(function () { return tc.Window.window.active }, 3000, "test window active")
+        for (let i = 0; i < 30 && !tc.Window.window.active; ++i)
+            wait(100)
+        if (!tc.Window.window.active)
+            skip("the test window could not be activated (another application has the foreground)")
     }
 
     function addViaUi(text) {
@@ -83,6 +89,10 @@ TestCase {
     }
 
     function init() {
+        // A window that is not exposed is not rendered, so delegates would never
+        // be created; make sure the test window is up front before each test.
+        tc.Window.window.raise()
+        tc.Window.window.requestActivate()
         verify(fixture.reset())
         view = createTemporaryObject(viewComponent, tc, {
             width: tc.width, height: tc.height,
@@ -824,5 +834,213 @@ TestCase {
         find("searchField").text = ""
         clickNav("all")
         compare(JSON.stringify(fixture.stored()), before)
+    }
+
+    // ---- quick add and undo delete ---------------------------------------------------
+
+    function openDetails() {
+        mouseClick(find("quickAddToggle"))
+        tryVerify(function () { return find("quickAddPanel").visible }, 2000, "details panel opens")
+    }
+    function fill(name, text) {
+        const field = find(name)
+        field.forceActiveFocus()
+        field.text = text
+    }
+
+    function test_quickAddWithTitleOnlyStillWorksWithPanelClosed() {
+        compare(find("quickAddPanel").visible, false)
+        addViaUi("Fast one")
+        compare(storedTitles(), ["Fast one"])
+        const t = fixture.stored()[0]
+        compare(t.listName, "Inbox")
+        compare(t.priority, 0)
+        compare(t.hasDue, false)
+        compare(t.hasReminder, false)
+    }
+
+    function test_quickAddWithDetailsPersistsEverything() {
+        openDetails()
+        find("addField").forceActiveFocus()
+        find("addField").text = "Detailed task"
+        find("quickPriority").currentIndex = 2
+        fill("quickList", "Work")
+        fill("quickDate", "2031-07-08")
+        fill("quickTime", "16:45")
+        fill("quickReminderDate", "2031-07-08")
+        fill("quickReminderTime", "15:30")
+        fill("quickNotes", "bring the slides")
+        find("addField").forceActiveFocus()
+        keyClick(Qt.Key_Return) // Enter in the title field submits everything
+
+        compare(storedTitles(), ["Detailed task"])
+        const t = fixture.stored()[0]
+        compare(t.listName, "Work")
+        compare(t.priority, 2)
+        compare(t.notes, "bring the slides")
+        verify(t.hasDue)
+        compare(t.dueAt.getFullYear(), 2031); compare(t.dueAt.getMonth(), 6); compare(t.dueAt.getDate(), 8)
+        compare(t.dueAt.getHours(), 16); compare(t.dueAt.getMinutes(), 45)
+        verify(t.hasReminder)
+        compare(t.reminderAt.getHours(), 15); compare(t.reminderAt.getMinutes(), 30)
+        compare(t.reminderSent, false)
+
+        // the form was cleared for the next task, and the title field too
+        compare(find("addField").text, "")
+        compare(find("quickList").text, "")
+        compare(find("quickPriority").currentIndex, 0)
+        // the new list appears in the sidebar
+        tryVerify(function () { return find("nav_list:Work") !== null }, 2000)
+    }
+
+    function test_quickAddInvalidDetailsKeepEverythingAndStoreNothing() {
+        openDetails()
+        find("addField").text = "Needs a valid date"
+        fill("quickDate", "31/12/2030")
+        fill("quickNotes", "keep me")
+        find("addField").forceActiveFocus()
+        keyClick(Qt.Key_Return)
+        compare(storedTitles(), [])
+        compare(find("quickAddError").visible, true)
+        verify(find("quickAddError").text.indexOf("Due date") >= 0)
+        compare(find("addField").text, "Needs a valid date")
+        compare(find("quickNotes").text, "keep me")
+
+        // an impossible reminder time is refused too
+        fill("quickDate", "")
+        fill("quickReminderDate", "2030-01-01")
+        fill("quickReminderTime", "99:99")
+        find("addField").forceActiveFocus()
+        keyClick(Qt.Key_Return)
+        compare(storedTitles(), [])
+        verify(find("quickAddError").text.indexOf("Reminder time") >= 0)
+
+        // fixing it works
+        fill("quickReminderTime", "09:15")
+        find("addField").forceActiveFocus()
+        keyClick(Qt.Key_Return)
+        compare(storedTitles(), ["Needs a valid date"])
+    }
+
+    function test_quickAddRepeatedSubmitCreatesOneTask() {
+        find("addField").forceActiveFocus()
+        find("addField").text = "Only once"
+        const button = find("addButton")
+        mouseClick(button)
+        mouseClick(button)
+        mouseClick(button)
+        keyClick(Qt.Key_Return)
+        compare(storedTitles(), ["Only once"])
+        compare(find("addMessage").visible, false) // a repeat is not reported as a mistake
+    }
+
+    function test_quickAddEmptyTitleStillWarnsWithDetailsOpen() {
+        openDetails()
+        fill("quickList", "Work")
+        find("addField").forceActiveFocus()
+        keyClick(Qt.Key_Return)
+        compare(find("addMessage").visible, true)
+        compare(storedTitles(), [])
+    }
+
+    function test_quickAddShortcutOpensDetailsAndFocusesTitle() {
+        activateWindow()
+        view.forceActiveFocus()
+        keyClick(Qt.Key_N, Qt.ControlModifier | Qt.ShiftModifier)
+        tryVerify(function () { return find("quickAddPanel").visible }, 2000)
+        tryVerify(function () { return find("addField").activeFocus }, 2000)
+    }
+
+    function test_quickAddNotShownInViewTellsTheUser() {
+        seed("existing")
+        clickNav("today")
+        // a task with a far-future due date does not belong in "Today"
+        openDetails()
+        find("addField").text = "Next month"
+        fill("quickDate", "2031-01-01")
+        find("addField").forceActiveFocus()
+        keyClick(Qt.Key_Return)
+        compare(storedTitles().length, 2)
+        tryVerify(function () { return find("toast").visible }, 2000)
+        verify(find("toastText").text.indexOf("not shown in this view") >= 0)
+    }
+
+    function deleteFirstRow() {
+        mouseClick(find("deleteButton", row(0)))
+        tryCompare(view.deleteConfirmDialog, "visible", true)
+        mouseClick(find("deleteConfirm"))
+        tryCompare(view.deleteConfirmDialog, "visible", false)
+    }
+
+    function test_undoRestoresTheDeletedTaskWithAllFields() {
+        const due = new Date(2031, 4, 6, 14, 30)
+        const reminder = new Date(2031, 4, 6, 14, 0)
+        verify(fixture.model.addTask("Precious", "line one", "Work", 2, due, reminder))
+        const before = fixture.stored()[0]
+
+        deleteFirstRow()
+        compare(storedTitles(), [])
+        tryVerify(function () { return find("toast").visible }, 2000)
+        verify(find("toastText").text.indexOf("Precious") >= 0)
+        compare(find("toastAction").visible, true)
+
+        mouseClick(find("toastAction"))
+        tryCompare(fixture.model, "count", 1)
+        const after = fixture.stored()[0]
+        compare(after.id, before.id)
+        compare(after.title, "Precious")
+        compare(after.notes, "line one")
+        compare(after.listName, "Work")
+        compare(after.priority, 2)
+        compare(after.dueAt.getTime(), before.dueAt.getTime())
+        compare(after.reminderAt.getTime(), before.reminderAt.getTime())
+        compare(after.reminderSent, false)
+        compare(find("errorBanner").visible, false)
+    }
+
+    function test_undoCannotBeUsedTwice() {
+        seed("Once")
+        deleteFirstRow()
+        tryVerify(function () { return find("toastAction").visible }, 2000)
+        const action = find("toastAction")
+        mouseClick(action)
+        mouseClick(action) // second click: nothing left to undo, nothing duplicated
+        tryCompare(fixture.model, "count", 1)
+        compare(storedTitles(), ["Once"])
+        compare(find("errorBanner").visible, false)
+        compare(fixture.model.canUndo, false)
+    }
+
+    function test_undoShortcutWorksWhenNotTyping() {
+        activateWindow()
+        seed("Ctrl+Z me")
+        deleteFirstRow()
+        tryVerify(function () { return find("toast").visible }, 2000)
+        find("taskList").forceActiveFocus()
+        keyClick(Qt.Key_Z, Qt.ControlModifier)
+        tryCompare(fixture.model, "count", 1)
+        compare(storedTitles(), ["Ctrl+Z me"])
+    }
+
+    function test_undoOfferExpires() {
+        seed("Too late")
+        view.undoWindowMs = 400
+        deleteFirstRow()
+        tryVerify(function () { return find("toast").visible }, 2000)
+        tryVerify(function () { return !find("toast").visible }, 3000, "the offer disappears")
+        compare(fixture.model.canUndo, false)
+        compare(storedTitles(), [])
+        view.undoWindowMs = 8000
+    }
+
+    function test_newerDeleteReplacesTheUndoOffer() {
+        seed("first"); seed("second")
+        deleteFirstRow()
+        deleteFirstRow()
+        tryVerify(function () { return find("toast").visible }, 2000)
+        verify(find("toastText").text.indexOf("second") >= 0)
+        mouseClick(find("toastAction"))
+        tryCompare(fixture.model, "count", 1)
+        compare(storedTitles(), ["second"])
     }
 }

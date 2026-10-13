@@ -361,6 +361,51 @@ bool TaskRepository::markReminderSent(qint64 id, bool *changed)
     return true;
 }
 
+bool TaskRepository::restoreTask(const Task &snapshot, Task *restored)
+{
+    if (!ensureReady())
+        return false;
+    if (snapshot.id <= 0)
+        return fail(QStringLiteral("That task cannot be restored (it has no id)."));
+    Task task = snapshot;
+    if (!validate(&task))
+        return false;
+
+    {
+        QSqlDatabase db = m_database.connection();
+        QSqlQuery insert(db);
+        if (!insert.prepare(QStringLiteral(
+                "INSERT INTO tasks (id, title, notes, list_name, priority, due_at, completed, "
+                "reminder_at, reminder_sent, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))) {
+            return fail(QStringLiteral("Cannot prepare restore: %1").arg(insert.lastError().text()));
+        }
+        const QDateTime now = QDateTime::currentDateTimeUtc();
+        const QDateTime created = task.createdAt.isValid() ? task.createdAt : now;
+        const QDateTime updated = task.updatedAt.isValid() ? task.updatedAt : now;
+        insert.addBindValue(task.id);
+        insert.addBindValue(task.title);
+        insert.addBindValue(task.notes);
+        insert.addBindValue(task.listName);
+        insert.addBindValue(task.priority);
+        insert.addBindValue(Task::timestampToVariant(task.dueAt));
+        insert.addBindValue(task.completed ? 1 : 0);
+        insert.addBindValue(Task::timestampToVariant(task.reminderAt));
+        insert.addBindValue(task.reminderSent ? 1 : 0);
+        insert.addBindValue(created.toUTC().toString(Qt::ISODateWithMs));
+        insert.addBindValue(updated.toUTC().toString(Qt::ISODateWithMs));
+        if (!insert.exec()) {
+            const QString reason = insert.lastError().text();
+            if (reason.contains(QStringLiteral("UNIQUE"), Qt::CaseInsensitive)
+                || reason.contains(QStringLiteral("PRIMARY KEY"), Qt::CaseInsensitive)) {
+                return fail(QStringLiteral("That task cannot be restored because its place has been taken."));
+            }
+            return fail(QStringLiteral("Cannot restore task: %1").arg(reason));
+        }
+    }
+    return getTask(task.id, restored);
+}
+
 bool TaskRepository::deleteTask(qint64 id)
 {
     if (!ensureReady())

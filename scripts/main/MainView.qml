@@ -35,6 +35,10 @@ Item {
     property string errorText: ""   // last model error, shown in the banner
     property string addMessage: ""  // validation message under the add field
     property bool forceRail: false  // user collapsed the sidebar
+    property bool quickDetails: false   // Quick Add details panel open
+    property double lastAddAt: 0        // ms timestamp of the last successful add
+    property bool undoToastActive: false // the toast currently offers "Undo delete"
+    property int undoWindowMs: 8000     // how long a deletion can be undone
     // Narrow windows always get the icon rail so navigation stays reachable.
     readonly property bool railMode: forceRail || width < Theme.railBreakpoint
 
@@ -130,27 +134,94 @@ Item {
         errorText = ""
         const title = addField.text.trim()
         if (title === "") {
+            // A second click/Enter right after a successful add is a repeat,
+            // not a mistake worth a warning (and it must not add anything).
+            if (Date.now() - lastAddAt < 700)
+                return
             addMessage = "Enter a task title first."
             addField.forceActiveFocus()
             return
         }
         addMessage = ""
 
-        // Give the new task what the current view needs to show it.
-        let due = new Date(NaN)
-        if (navKey === "today" || navKey === "upcoming") {
+        // Optional details (priority, list, due, reminder, note).
+        const details = quickPanel.collect()
+        if (details.error) {
+            quickDetails = true // show the field that needs fixing
+            return
+        }
+
+        // Give the new task what the current view needs to show it, unless
+        // the user chose something explicitly.
+        let due = details.due
+        if (isNaN(due.getTime()) && (navKey === "today" || navKey === "upcoming")) {
             due = new Date()
             if (navKey === "upcoming")
                 due.setDate(due.getDate() + 1)
             due.setHours(23, 59, 0, 0)
         }
-        const list = currentNav.scope === scopeList ? currentNav.list : ""
+        let list = details.list.trim()
+        if (list === "" && currentNav.scope === scopeList)
+            list = currentNav.list
 
-        if (taskModel.addTask(title, "", list, 0, due)) {
+        const countBefore = taskModel.count
+        if (taskModel.addTask(title, details.notes, list, details.priority, due, details.reminder)) {
+            lastAddAt = Date.now()
             addField.clear()
+            quickPanel.reset()
             if (searchField.text !== "")
                 searchField.clear() // otherwise the new task could be hidden
+            if (taskModel.count === countBefore) // filtered out of the current view
+                notify("Added \u201C" + title + "\u201D \u2014 it is not shown in this view.", "check")
         } // on failure the banner shows the error and the text is kept
+    }
+
+    // A short notice. It replaces (and so retires) a pending "Undo delete" offer.
+    function notify(text, icon) {
+        discardUndoOffer()
+        toast.show(text, "", 5000, icon || "check")
+    }
+
+    function discardUndoOffer() {
+        if (undoToastActive) {
+            undoToastActive = false
+            if (taskModel)
+                taskModel.discardUndo()
+        }
+    }
+
+    function offerUndo(title) {
+        undoToastActive = true
+        toast.show("\u201C" + title + "\u201D deleted", qsTr("Undo"), undoWindowMs, "trash")
+    }
+
+    function undoDelete() {
+        if (!undoToastActive || !taskModel.canUndo)
+            return // already used, expired, or replaced: never restore twice
+        errorText = ""
+        const title = taskModel.undoTitle
+        if (taskModel.undoDelete()) {
+            undoToastActive = false
+            toast.hide()
+            notify("Restored \u201C" + title + "\u201D", "check")
+        } // on failure the error banner explains; the offer stays for a retry
+    }
+
+    // True while the keyboard is typing into a text field (so Ctrl+Z must
+    // stay a text-undo there).
+    readonly property bool textInputHasFocus: {
+        const w = root.Window.window
+        const item = w ? w.activeFocusItem : null
+        return item !== null && item !== undefined && item.selectByMouse !== undefined
+    }
+
+    function openQuickAdd() {
+        if (!databaseOk)
+            return
+        if (!canAdd)
+            selectNav(navItems[0])
+        quickDetails = true
+        addField.forceActiveFocus()
     }
 
     function subtitle() {
@@ -283,6 +354,16 @@ Item {
         sequence: "Ctrl+F"
         enabled: root.databaseOk
         onActivated: searchField.forceActiveFocus()
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+N"
+        enabled: root.databaseOk
+        onActivated: root.openQuickAdd()
+    }
+    Shortcut {
+        sequence: "Ctrl+Z"
+        enabled: root.undoToastActive && !root.textInputHasFocus
+        onActivated: root.undoDelete()
     }
     Shortcut {
         sequence: "F1"
@@ -650,6 +731,35 @@ Item {
                         enabled: root.canAdd
                         onClicked: root.addTask()
                     }
+                    TNIconButton {
+                        objectName: "quickAddToggle"
+                        enabled: root.canAdd
+                        iconName: "chevron"
+                        rotation: root.quickDetails ? 180 : 0
+                        tip: root.quickDetails ? "Hide details" : "Add details: priority, list, due date, reminder (Ctrl+Shift+N)"
+                        Behavior on rotation { NumberAnimation { duration: Theme.durationFast } }
+                        onClicked: root.quickDetails = !root.quickDetails
+
+                        // a dot shows that hidden details are filled in
+                        Rectangle {
+                            visible: quickPanel.hasDetails && !root.quickDetails
+                            width: 8
+                            height: 8
+                            radius: 4
+                            color: Theme.accent
+                            anchors.top: parent.top
+                            anchors.right: parent.right
+                            anchors.margins: 3
+                        }
+                    }
+                }
+
+                QuickAddPanel {
+                    id: quickPanel
+                    objectName: "quickAddPanel"
+                    Layout.fillWidth: true
+                    expanded: root.quickDetails && root.canAdd
+                    onSubmitted: root.addTask()
                 }
 
                 // Fired reminders (in-app notification; stays until handled).
@@ -750,6 +860,22 @@ Item {
                     }
                 }
             }
+
+            TNToast {
+                id: toast
+                objectName: "toast"
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: Theme.s5
+                width: Math.min(implicitWidth, parent.width - Theme.s5 * 2)
+                onActionTriggered: root.undoDelete()
+                onExpired: {
+                    if (root.undoToastActive) {
+                        root.undoToastActive = false
+                        root.taskModel.discardUndo() // the window to undo has passed
+                    }
+                }
+            }
         }
     }
 
@@ -774,6 +900,8 @@ Item {
 
         readonly property var entries: [
             { keys: "Ctrl+N", what: "New task (focus the add field)" },
+            { keys: "Ctrl+Shift+N", what: "New task with details (priority, list, due, reminder)" },
+            { keys: "Ctrl+Z", what: "Undo a delete, while the notice is showing" },
             { keys: "Ctrl+F", what: "Search tasks" },
             { keys: "Ctrl+1 \u2013 5", what: "All Tasks, Today, Upcoming, Completed, Inbox" },
             { keys: "\u2193 / \u2191", what: "From search or add: into the list; between tasks" },
@@ -883,8 +1011,11 @@ Item {
                             return
                         deleteDialog.closing = true
                         root.errorText = ""
-                        root.taskModel.removeTask(deleteDialog.taskId)
+                        const deletedTitle = deleteDialog.taskTitle
+                        const ok = root.taskModel.removeTask(deleteDialog.taskId)
                         deleteDialog.close()
+                        if (ok)
+                            root.offerUndo(deletedTitle)
                     }
                 }
             }

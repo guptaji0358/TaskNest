@@ -24,11 +24,13 @@ qt_add_library(tasknestcore STATIC
     scripts/src/taskrepository.cpp
     scripts/src/tasklistmodel.cpp
     scripts/src/reminderscheduler.cpp
+    scripts/src/singleinstance.cpp
     scripts/include/database.h
     scripts/include/task.h
     scripts/include/taskrepository.h
     scripts/include/tasklistmodel.h
     scripts/include/reminderscheduler.h
+    scripts/include/singleinstance.h
 )
 
 target_include_directories(tasknestcore PUBLIC
@@ -77,6 +79,8 @@ qt_add_qml_module(appTaskNest
         scripts/main/TNComboBox.qml
         scripts/main/TNScrollBar.qml
         scripts/main/TNDialog.qml
+        scripts/main/TNToast.qml
+        scripts/main/QuickAddPanel.qml
         scripts/main/TaskCheck.qml
         scripts/main/NavItem.qml
         scripts/main/TaskRow.qml

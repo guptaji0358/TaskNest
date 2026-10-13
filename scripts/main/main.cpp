@@ -10,6 +10,7 @@
 
 #include "database.h"
 #include "reminderscheduler.h"
+#include "singleinstance.h"
 #include "tasklistmodel.h"
 #include "taskrepository.h"
 
@@ -20,10 +21,23 @@ int main(int argc, char *argv[])
     // Basic is the neutral base for the custom TaskNest controls (see Theme.qml).
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
+    // One TaskNest per database. The lock lives next to the database file, so
+    // separate portable copies do not block each other. A second launch brings
+    // the running window forward and exits; a stale lock from a crashed
+    // instance is detected and replaced (QLockFile checks that the owner is
+    // really gone).
+    QString databasePath = Database::defaultDatabasePath();
+    SingleInstanceGuard instanceGuard;
+    if (!databasePath.isEmpty() && !instanceGuard.acquire(databasePath + QStringLiteral(".lock"))) {
+        SingleInstanceGuard::activateWindowOfProcess(instanceGuard.ownerPid());
+        return 0;
+    }
+
     // Declared after `app` and in dependency order, so they are destroyed in
     // reverse: model, repository, then the connection.
     Database database;
-    const bool databaseReady = database.initialize();
+    // An empty path means "no usable location": initialize() then reports why.
+    const bool databaseReady = database.initialize(databasePath);
     TaskRepository repository(database);
     TaskListModel taskModel(repository);
     ReminderScheduler reminders(repository); // destroyed before the model/repository

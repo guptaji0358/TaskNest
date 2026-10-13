@@ -26,6 +26,8 @@ class TaskListModel : public QAbstractListModel
     Q_PROPERTY(QString searchText READ searchText WRITE setSearchText NOTIFY searchTextChanged)
     Q_PROPERTY(QStringList listNames READ listNames NOTIFY listNamesChanged)
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
+    Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoChanged)
+    Q_PROPERTY(QString undoTitle READ undoTitle NOTIFY undoChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY errorOccurred)
 
 public:
@@ -67,6 +69,8 @@ public:
     void setSearchText(const QString &text);
     QStringList listNames() const { return m_listNames; }
     QString lastError() const { return m_lastError; }
+    bool canUndo() const { return m_undo.has_value(); }
+    QString undoTitle() const { return m_undo ? m_undo->title : QString(); }
 
     // Selects scope (+ list name for List) and completion filter in one load.
     Q_INVOKABLE bool setView(int scope, const QString &listName = QString(),
@@ -76,7 +80,8 @@ public:
     Q_INVOKABLE bool refresh();
     Q_INVOKABLE bool addTask(const QString &title, const QString &notes = QString(),
                              const QString &listName = QString(), int priority = 0,
-                             const QDateTime &dueAt = QDateTime());
+                             const QDateTime &dueAt = QDateTime(),
+                             const QDateTime &reminderAt = QDateTime());
     Q_INVOKABLE bool updateTask(qint64 id, const QString &title, const QString &notes,
                                 const QString &listName, int priority,
                                 const QDateTime &dueAt = QDateTime());
@@ -88,6 +93,12 @@ public:
     Q_INVOKABLE bool setCompleted(qint64 id, bool completed);
     Q_INVOKABLE bool removeTask(qint64 id);
 
+    // Undo for the most recent delete only. The snapshot lives in memory, is
+    // replaced by the next delete, and is gone when the app exits. A failed
+    // undo keeps the snapshot so it can be retried.
+    Q_INVOKABLE bool undoDelete();
+    Q_INVOKABLE void discardUndo();
+
 signals:
     void errorOccurred(const QString &message);
     void countChanged();
@@ -98,6 +109,7 @@ signals:
     // Emitted after any successful add/update/complete/delete, whether or not
     // the change is visible in the current view.
     void tasksMutated();
+    void undoChanged();
 
 private:
     // `base` holds completion, search text and list name; the date range
@@ -118,6 +130,7 @@ private:
     TaskRepository::Query m_query;
     Scope m_scope = Everything;
     QList<Task> m_tasks;
+    std::optional<Task> m_undo; // the last deleted task, until undone or discarded
     QStringList m_listNames;
     QString m_lastError;
 };

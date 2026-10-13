@@ -52,6 +52,11 @@ public:
     bool setCompleted(qint64 id, bool completed, Task *updated = nullptr);
     bool deleteTask(qint64 id);
 
+    // Puts a previously deleted task back exactly as it was: same id, fields,
+    // created/updated times and reminder state. Refuses (and changes nothing)
+    // if a task with that id exists. Used by "Undo delete".
+    bool restoreTask(const Task &snapshot, Task *restored = nullptr);
+
     // ---- reminders -------------------------------------------------------
     // "Pending" = has a reminder time, not yet sent, task not completed.
     // `exclude` lists task ids to skip (reminders already being shown).

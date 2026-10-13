@@ -51,34 +51,6 @@ TNDialog {
         titleField.cursorPosition = 0 // long titles open scrolled to their start
     }
 
-    // Parses a local date + optional time. Both blank means "none".
-    // Returns { error: string } or { value: Date } (invalid Date = none).
-    // `label` names the field in messages; a missing time becomes hours:minutes.
-    function parseDateTime(dateText, timeText, label, hours, minutes) {
-        dateText = dateText.trim()
-        timeText = timeText.trim()
-        if (dateText === "" && timeText === "")
-            return { value: new Date(NaN) }
-        if (dateText === "")
-            return { error: "Enter a " + label.toLowerCase() + " date, or clear the time." }
-
-        const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText)
-        if (!d)
-            return { error: label + " date must look like 2026-12-31." }
-        if (timeText !== "") {
-            const t = /^(\d{1,2}):(\d{2})$/.exec(timeText)
-            if (!t || Number(t[1]) > 23 || Number(t[2]) > 59)
-                return { error: label + " time must look like 14:30 (24-hour)." }
-            hours = Number(t[1])
-            minutes = Number(t[2])
-        }
-        const date = new Date(Number(d[1]), Number(d[2]) - 1, Number(d[3]), hours, minutes, 0, 0)
-        if (date.getFullYear() !== Number(d[1]) || date.getMonth() !== Number(d[2]) - 1
-                || date.getDate() !== Number(d[3]))
-            return { error: "That " + label.toLowerCase() + " date does not exist." }
-        return { value: date }
-    }
-
     function save() {
         if (closing || !visible)
             return // a second click/Enter while the dialog is closing must not save twice
@@ -89,13 +61,13 @@ TNDialog {
             return
         }
         // Date-only due dates mean end of day; date-only reminders mean 09:00.
-        const due = parseDateTime(dateField.text, timeField.text, "Due", 23, 59)
+        const due = Theme.parseDateTime(dateField.text, timeField.text, "Due", 23, 59)
         if (due.error) {
             errorText = due.error
             dateField.forceActiveFocus()
             return
         }
-        const reminder = parseDateTime(reminderDateField.text, reminderTimeField.text,
+        const reminder = Theme.parseDateTime(reminderDateField.text, reminderTimeField.text,
                                        "Reminder", 9, 0)
         if (reminder.error) {
             errorText = reminder.error

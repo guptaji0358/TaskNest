@@ -3,6 +3,7 @@
 
 #include "database.h"
 #include "reminderscheduler.h"
+#include "singleinstance.h"
 #include "task.h"
 #include "tasklistmodel.h"
 #include "taskrepository.h"
@@ -12,6 +13,7 @@
 #include <QCryptographicHash>
 #include <QFile>
 #include <QSignalSpy>
+#include <QSysInfo>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -1117,6 +1119,283 @@ private slots:
         QCOMPARE(f.fired.size(), 0);
         QVERIFY(f.scheduler.isTimerActive());
         QCOMPARE(f.scheduler.nextReminderAt(), kStart.addYears(70));
+    }
+
+    // ---- quick add, undo delete, single instance ---------------------------------------
+
+    void model_quickAddPersistsEveryDetailAndSchedulesTheReminder()
+    {
+        const QString file = path("quick.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        ReminderScheduler scheduler(repo);
+        scheduler.setClock([] { return kStart; });
+        QObject::connect(&model, &TaskListModel::tasksMutated, &scheduler, &ReminderScheduler::reschedule);
+        QVERIFY(model.refresh());
+
+        // title only
+        QVERIFY(model.addTask("just a title"));
+        QCOMPARE(scalar(file, "SELECT list_name FROM tasks WHERE title='just a title'").toString(), QString("Inbox"));
+        QVERIFY(!scheduler.isTimerActive());
+
+        // everything at once
+        const QDateTime due = kStart.addDays(3);
+        const QDateTime reminder = kStart.addSecs(90 * 60);
+        QVERIFY(model.addTask("with details", "two\nlines", "Work", 2, due, reminder));
+        QCOMPARE(scalar(file, "SELECT notes FROM tasks WHERE title='with details'").toString(), QString("two\nlines"));
+        QCOMPARE(scalar(file, "SELECT list_name FROM tasks WHERE title='with details'").toString(), QString("Work"));
+        QCOMPARE(scalar(file, "SELECT priority FROM tasks WHERE title='with details'").toInt(), 2);
+        QCOMPARE(scalar(file, "SELECT due_at FROM tasks WHERE title='with details'").toString(),
+                 due.toUTC().toString(Qt::ISODateWithMs));
+        QCOMPARE(scalar(file, "SELECT reminder_at FROM tasks WHERE title='with details'").toString(),
+                 reminder.toUTC().toString(Qt::ISODateWithMs));
+        QCOMPARE(scalar(file, "SELECT reminder_sent FROM tasks WHERE title='with details'").toInt(), 0);
+
+        // the reminder was scheduled by the add itself
+        QVERIFY(scheduler.isTimerActive());
+        QCOMPARE(scheduler.nextReminderAt(), reminder);
+
+        // invalid input stores nothing
+        QVERIFY(!model.addTask("   ", "notes", "Work", 1, due, reminder));
+        QVERIFY(!model.addTask("bad priority", "", "", 7));
+        QCOMPARE(scalar(file, "SELECT COUNT(*) FROM tasks").toInt(), 2);
+    }
+
+    void repo_restoreTaskBringsBackTheSameRow()
+    {
+        const QString file = path("restore.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+
+        Task task = draft("Restore me");
+        task.notes = "multi\nline";
+        task.listName = "Work";
+        task.priority = 2;
+        task.dueAt = QDateTime(QDate(2031, 3, 4), QTime(5, 6), QTimeZone::utc());
+        task.reminderAt = QDateTime(QDate(2031, 3, 4), QTime(4, 0), QTimeZone::utc());
+        Task created;
+        QVERIFY(repo.addTask(task, &created));
+        QVERIFY(repo.setCompleted(created.id, true, &created));
+        QVERIFY(repo.markReminderSent(created.id));
+        Task before;
+        QVERIFY(repo.getTask(created.id, &before));
+
+        QVERIFY(repo.deleteTask(created.id));
+        QVERIFY(!repo.getTask(created.id, nullptr));
+
+        Task restored;
+        QVERIFY2(repo.restoreTask(before, &restored), qPrintable(repo.lastError()));
+        QCOMPARE(restored.id, before.id);
+        QCOMPARE(restored.title, before.title);
+        QCOMPARE(restored.notes, before.notes);
+        QCOMPARE(restored.listName, before.listName);
+        QCOMPARE(restored.priority, before.priority);
+        QCOMPARE(restored.dueAt, before.dueAt);
+        QCOMPARE(restored.reminderAt, before.reminderAt);
+        QCOMPARE(restored.completed, true);
+        QCOMPARE(restored.reminderSent, true);          // the reminder state is preserved too
+        QCOMPARE(restored.createdAt, before.createdAt);
+        QCOMPARE(restored.updatedAt, before.updatedAt);
+
+        // a second restore of the same id is refused and changes nothing
+        QVERIFY(!repo.restoreTask(before));
+        QVERIFY(repo.lastError().contains("cannot be restored"));
+        QCOMPARE(scalar(file, "SELECT COUNT(*) FROM tasks").toInt(), 1);
+
+        // new tasks never reuse the restored id
+        Task next;
+        QVERIFY(repo.addTask(draft("next"), &next));
+        QVERIFY(next.id > before.id);
+    }
+
+    void model_undoDeleteRestoresTaskAndReminder()
+    {
+        const QString file = path("undo.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+        ReminderScheduler scheduler(repo);
+        scheduler.setClock([] { return kStart; });
+        QObject::connect(&model, &TaskListModel::tasksMutated, &scheduler, &ReminderScheduler::reschedule);
+        QVERIFY(model.refresh());
+
+        const QDateTime due = kStart.addDays(2);
+        const QDateTime reminder = kStart.addSecs(45 * 60);
+        QVERIFY(model.addTask("keep order 1"));
+        QVERIFY(model.addTask("precious", "notes here", "Work", 2, due, reminder));
+        QVERIFY(model.addTask("keep order 2"));
+        QCOMPARE(scheduler.nextReminderAt(), reminder);
+        qint64 id = 0;
+        for (int row = 0; row < model.rowCount(); ++row) {
+            if (model.data(model.index(row), TaskListModel::TitleRole).toString() == "precious")
+                id = model.data(model.index(row), TaskListModel::IdRole).toLongLong();
+        }
+        QVERIFY(id > 0);
+        QVERIFY(!model.canUndo());
+
+        QSignalSpy undoChanged(&model, &TaskListModel::undoChanged);
+        QVERIFY(model.removeTask(id));
+        QVERIFY(model.canUndo());
+        QCOMPARE(model.undoTitle(), QString("precious"));
+        QVERIFY(undoChanged.size() >= 1);
+        QCOMPARE(model.rowCount(), 2);
+        // deleted: its reminder is no longer scheduled
+        QVERIFY(!scheduler.isTimerActive());
+        QCOMPARE(scalar(file, "SELECT COUNT(*) FROM tasks WHERE id=" + QString::number(id)).toInt(), 0);
+
+        QVERIFY2(model.undoDelete(), qPrintable(model.lastError()));
+        QVERIFY(!model.canUndo());
+        QCOMPARE(model.rowCount(), 3);
+
+        // same id, same fields, back in its sorted place (due date first)
+        QCOMPARE(model.data(model.index(0), TaskListModel::IdRole).toLongLong(), id);
+        QCOMPARE(model.data(model.index(0), TaskListModel::TitleRole).toString(), QString("precious"));
+        QCOMPARE(model.data(model.index(0), TaskListModel::NotesRole).toString(), QString("notes here"));
+        QCOMPARE(model.data(model.index(0), TaskListModel::ListNameRole).toString(), QString("Work"));
+        QCOMPARE(model.data(model.index(0), TaskListModel::PriorityRole).toInt(), 2);
+        QCOMPARE(model.data(model.index(0), TaskListModel::DueAtRole).toDateTime().toUTC(), due);
+        QCOMPARE(model.data(model.index(0), TaskListModel::ReminderAtRole).toDateTime().toUTC(), reminder);
+        QCOMPARE(model.data(model.index(0), TaskListModel::ReminderSentRole).toBool(), false);
+
+        // and the scheduler is armed for it again
+        QVERIFY(scheduler.isTimerActive());
+        QCOMPARE(scheduler.nextReminderAt(), reminder);
+
+        // a second Undo has nothing to do and says so; nothing is duplicated
+        QSignalSpy errors(&model, &TaskListModel::errorOccurred);
+        QVERIFY(!model.undoDelete());
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(model.rowCount(), 3);
+        QCOMPARE(scalar(file, "SELECT COUNT(*) FROM tasks").toInt(), 3);
+    }
+
+    void model_undoAppliesOnlyToTheLatestDeleteAndCanBeDiscarded()
+    {
+        Database db;
+        QVERIFY(db.initialize(path("undo_latest.db")));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        QVERIFY(model.refresh());
+        QVERIFY(model.addTask("first"));
+        QVERIFY(model.addTask("second"));
+        const qint64 firstId = model.data(model.index(0), TaskListModel::IdRole).toLongLong();
+        const qint64 secondId = model.data(model.index(1), TaskListModel::IdRole).toLongLong();
+
+        QVERIFY(model.removeTask(firstId));
+        QVERIFY(model.removeTask(secondId));
+        QCOMPARE(model.undoTitle(), QString("second"));
+        QVERIFY(model.undoDelete());
+        QCOMPARE(model.rowCount(), 1);
+        QCOMPARE(model.data(model.index(0), TaskListModel::TitleRole).toString(), QString("second"));
+        QVERIFY(!model.canUndo()); // "first" is no longer recoverable: bounded to one
+
+        QVERIFY(model.removeTask(secondId));
+        QVERIFY(model.canUndo());
+        model.discardUndo();
+        QVERIFY(!model.canUndo());
+        QVERIFY(!model.undoDelete());
+    }
+
+    void model_failedUndoKeepsTheSnapshotForARetry()
+    {
+        const QString file = path("undo_fail.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        QVERIFY(model.refresh());
+        QVERIFY(model.addTask("retry me", "n", "Work", 1));
+        const qint64 id = model.data(model.index(0), TaskListModel::IdRole).toLongLong();
+        QVERIFY(model.removeTask(id));
+
+        db.shutdown(); // restoring is impossible right now
+        QSignalSpy errors(&model, &TaskListModel::errorOccurred);
+        QVERIFY(!model.undoDelete());
+        QCOMPARE(errors.size(), 1);
+        QVERIFY(model.canUndo());          // still recoverable
+        QCOMPARE(model.rowCount(), 0);
+
+        QVERIFY(db.initialize(file));
+        QVERIFY2(model.undoDelete(), qPrintable(model.lastError()));
+        QCOMPARE(model.rowCount(), 1);
+        QCOMPARE(model.data(model.index(0), TaskListModel::NotesRole).toString(), QString("n"));
+    }
+
+    void model_undoIsRefusedWhenTheIdIsTakenAndNothingIsLost()
+    {
+        const QString file = path("undo_taken.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        QVERIFY(model.refresh());
+        QVERIFY(model.addTask("original"));
+        const qint64 id = model.data(model.index(0), TaskListModel::IdRole).toLongLong();
+        QVERIFY(model.removeTask(id));
+
+        // something else now occupies that id (e.g. the file was swapped under us)
+        QVERIFY(runSql(file, {QString("INSERT INTO tasks (id, title, created_at, updated_at) "
+                                      "VALUES (%1, 'squatter', '2030-01-01T00:00:00.000Z', '2030-01-01T00:00:00.000Z')")
+                                  .arg(id)}));
+        QVERIFY(!model.undoDelete());
+        QVERIFY(model.lastError().contains("cannot be restored"));
+        QCOMPARE(scalar(file, "SELECT title FROM tasks WHERE id=" + QString::number(id)).toString(), QString("squatter"));
+        QCOMPARE(scalar(file, "SELECT COUNT(*) FROM tasks").toInt(), 1);
+    }
+
+    void instance_secondLaunchIsRejectedAndLockIsReleasedOnExit()
+    {
+        const QString lockPath = path("instance.db.lock");
+        SingleInstanceGuard first;
+        QVERIFY(first.acquire(lockPath));
+        QVERIFY(first.isPrimary());
+
+        SingleInstanceGuard second;
+        QVERIFY(!second.acquire(lockPath));          // a competing launch is refused ...
+        QVERIFY(!second.isPrimary());
+        QCOMPARE(second.ownerPid(), qint64(QCoreApplication::applicationPid())); // ... and knows who owns it
+
+        SingleInstanceGuard third;
+        QVERIFY(!third.acquire(lockPath));           // simultaneous attempts all lose
+
+        first.release();                             // the owner exits
+        SingleInstanceGuard fourth;
+        QVERIFY(fourth.acquire(lockPath));           // the next launch is allowed
+    }
+
+    void instance_staleLockFromACrashedProcessDoesNotBlock()
+    {
+        const QString lockPath = path("stale.db.lock");
+        {
+            // What an abandoned lock looks like: a pid that is not running, written long ago.
+            QFile lock(lockPath);
+            QVERIFY(lock.open(QIODevice::WriteOnly));
+            lock.write(QByteArray("3999999\nTaskNest\n") + QSysInfo::machineHostName().toUtf8() + "\n");
+            lock.close();
+            QVERIFY(lock.open(QIODevice::ReadWrite));
+            QVERIFY(lock.setFileTime(QDateTime::currentDateTime().addSecs(-600),
+                                     QFileDevice::FileModificationTime));
+        }
+        SingleInstanceGuard guard;
+        QVERIFY2(guard.acquire(lockPath), "a dead owner's lock must be treated as stale");
+        QVERIFY(guard.isPrimary());
+
+        // and a live owner's lock is never mistaken for stale, however old the file
+        SingleInstanceGuard other;
+        QVERIFY(!other.acquire(lockPath));
+    }
+
+    void instance_unusableLockLocationDoesNotLockTheUserOut()
+    {
+        SingleInstanceGuard guard;
+        // The folder does not exist, so no lock can be created at all.
+        QVERIFY(guard.acquire(path("no/such/folder/x.lock")));
+        QVERIFY(!guard.lockError().isEmpty());
     }
 
     void scheduler_realTimerFiresOnceAndStops()
