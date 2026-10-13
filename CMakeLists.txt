@@ -7,12 +7,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Qt is located through CMAKE_PREFIX_PATH (pass -DCMAKE_PREFIX_PATH=<Qt kit dir>).
-find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 Sql)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
 qt_add_executable(appTaskNest
     scripts/main/main.cpp
+    scripts/src/database.cpp
+    scripts/include/database.h
 )
 
 set_target_properties(appTaskNest PROPERTIES
@@ -38,4 +40,5 @@ target_include_directories(appTaskNest PRIVATE
 target_link_libraries(appTaskNest PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
+    Qt6::Sql
 )
