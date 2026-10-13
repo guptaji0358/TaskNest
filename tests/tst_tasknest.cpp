@@ -674,6 +674,116 @@ private slots:
         QCOMPARE(model.rowCount(), 1);
         QVERIFY(!model.addTask("nope"));
     }
+
+    // ---- views: due date ranges and lists ---------------------------------
+
+    void repo_filtersByDueRangeAndList()
+    {
+        Database db;
+        QVERIFY(db.initialize(path("range.db")));
+        TaskRepository repo(db);
+
+        Task early = draft("early");
+        early.dueAt = QDateTime(QDate(2030, 1, 1), QTime(10, 0), QTimeZone::utc());
+        Task late = draft("late");
+        late.dueAt = QDateTime(QDate(2030, 1, 3), QTime(10, 0), QTimeZone::utc());
+        Task undated = draft("undated");
+        Task work = draft("work item");
+        work.listName = "Work";
+        QVERIFY(repo.addTask(early) && repo.addTask(late) && repo.addTask(undated) && repo.addTask(work));
+
+        auto titles = [&](TaskRepository::Query query) {
+            QList<Task> found;
+            if (!repo.loadTasks(query, &found))
+                return QStringList{"<error>"};
+            QStringList result;
+            for (const Task &task : found)
+                result << task.title;
+            return result;
+        };
+
+        TaskRepository::Query range;
+        range.dueFrom = QDateTime(QDate(2030, 1, 1), QTime(0, 0), QTimeZone::utc());
+        range.dueBefore = QDateTime(QDate(2030, 1, 2), QTime(0, 0), QTimeZone::utc());
+        QCOMPARE(titles(range), QStringList{"early"}); // undated never matches
+
+        TaskRepository::Query from;
+        from.dueFrom = QDateTime(QDate(2030, 1, 2), QTime(0, 0), QTimeZone::utc());
+        QCOMPARE(titles(from), QStringList{"late"});
+
+        TaskRepository::Query inList;
+        inList.listName = "Work";
+        QCOMPARE(titles(inList), QStringList{"work item"});
+        inList.titleContains = "nothing";
+        QCOMPARE(titles(inList), QStringList()); // composes with search
+
+        QStringList names;
+        QVERIFY(repo.listNames(&names));
+        QCOMPARE(names, (QStringList{"Inbox", "Work"}));
+    }
+
+    void model_scopesComposeWithFiltersAndSearch()
+    {
+        Database db;
+        QVERIFY(db.initialize(path("scopes.db")));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+        QVERIFY(model.refresh());
+
+        const QDate today = QDate::currentDate();
+        const QDateTime todayLate(today, QTime(23, 59));
+        const QDateTime tomorrow(today.addDays(1), QTime(12, 0));
+        const QDateTime yesterday(today.addDays(-1), QTime(12, 0));
+
+        QVERIFY(model.addTask("today open", "", "Inbox", 0, todayLate));
+        QVERIFY(model.addTask("today done", "", "Inbox", 0, todayLate));
+        QVERIFY(model.addTask("tomorrow", "", "Work", 0, tomorrow));
+        QVERIFY(model.addTask("yesterday", "", "Inbox", 0, yesterday));
+        QVERIFY(model.addTask("no date", "", "Work"));
+        const qint64 doneId = model.data(model.index(1), TaskListModel::IdRole).toLongLong();
+        QVERIFY(model.setCompleted(doneId, true));
+        const qint64 tomorrowId = model.data(model.index(2), TaskListModel::IdRole).toLongLong();
+
+        auto titles = [&]() {
+            QStringList result;
+            for (int row = 0; row < model.rowCount(); ++row)
+                result << model.data(model.index(row), TaskListModel::TitleRole).toString();
+            return result;
+        };
+
+        QVERIFY(model.setView(TaskListModel::Today));
+        QCOMPARE(titles(), (QStringList{"today open", "today done"})); // includes completed
+        model.setCompletionFilter(TaskListModel::Active);
+        QCOMPARE(titles(), QStringList{"today open"});
+        model.setCompletionFilter(TaskListModel::All);
+
+        QVERIFY(model.setView(TaskListModel::Upcoming));
+        QCOMPARE(titles(), QStringList{"tomorrow"}); // incomplete, after today
+        model.setSearchText("zzz");
+        QCOMPARE(model.rowCount(), 0);
+        model.setSearchText(QString());
+
+        // A task completed while viewing Upcoming leaves the view.
+        QSignalSpy removed(&model, &QAbstractItemModel::rowsRemoved);
+        QVERIFY(model.setCompleted(tomorrowId, true));
+        QCOMPARE(removed.size(), 1);
+        QCOMPARE(model.rowCount(), 0);
+        QVERIFY(model.setCompleted(tomorrowId, false));
+        QCOMPARE(model.rowCount(), 1); // and returns when re-opened
+
+        QVERIFY(model.setView(TaskListModel::List, "Work"));
+        QCOMPARE(titles(), (QStringList{"tomorrow", "no date"}));
+        QCOMPARE(model.listName(), QString("Work"));
+        QVERIFY(model.setView(TaskListModel::Everything, QString(), TaskListModel::Completed));
+        QCOMPARE(titles(), QStringList{"today done"});
+
+        QCOMPARE(model.listNames(), (QStringList{"Inbox", "Work"}));
+        QSignalSpy errors(&model, &TaskListModel::errorOccurred);
+        QVERIFY(!model.setView(TaskListModel::List, "  "));
+        QVERIFY(!model.setView(99));
+        QCOMPARE(errors.size(), 2);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestTaskNest)

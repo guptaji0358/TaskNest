@@ -105,6 +105,19 @@ bool TaskRepository::loadTasks(const Query &query, QList<Task> *tasks)
     else if (query.completion == CompletionFilter::Completed)
         conditions << QStringLiteral("completed = 1");
 
+    if (!query.listName.isEmpty()) {
+        conditions << QStringLiteral("list_name = ?");
+        bindings << query.listName;
+    }
+    if (query.dueFrom) {
+        conditions << QStringLiteral("due_at >= ?");
+        bindings << Task::timestampToVariant(query.dueFrom);
+    }
+    if (query.dueBefore) {
+        conditions << QStringLiteral("due_at < ?");
+        bindings << Task::timestampToVariant(query.dueBefore);
+    }
+
     const QString needle = query.titleContains.trimmed();
     if (!needle.isEmpty()) {
         conditions << QStringLiteral("title LIKE ? ESCAPE '\\'");
@@ -129,6 +142,25 @@ bool TaskRepository::loadTasks(const Query &query, QList<Task> *tasks)
         result.append(taskFromRow(select));
     if (tasks)
         *tasks = result;
+    return true;
+}
+
+bool TaskRepository::listNames(QStringList *names)
+{
+    if (!ensureReady())
+        return false;
+
+    QSqlDatabase db = m_database.connection();
+    QSqlQuery select(db);
+    if (!select.exec(QStringLiteral(
+            "SELECT DISTINCT list_name FROM tasks ORDER BY list_name COLLATE NOCASE"))) {
+        return fail(QStringLiteral("Cannot load lists: %1").arg(select.lastError().text()));
+    }
+    QStringList result;
+    while (select.next())
+        result << select.value(0).toString();
+    if (names)
+        *names = result;
     return true;
 }
 

@@ -2,6 +2,7 @@
 #include <QDir>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQuickStyle>
 
 #include "database.h"
 #include "tasklistmodel.h"
@@ -11,6 +12,7 @@ int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("TaskNest"));
+    QQuickStyle::setStyle(QStringLiteral("Fusion")); // desktop look; follows the system palette
 
     // Declared after `app` and in dependency order, so they are destroyed in
     // reverse: model, repository, then the connection.

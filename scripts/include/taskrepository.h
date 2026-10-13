@@ -3,6 +3,7 @@
 #include "task.h"
 
 #include <QList>
+#include <QStringList>
 #include <QString>
 
 #include <optional>
@@ -22,6 +23,9 @@ public:
         std::optional<qint64> id;       // restrict to one task
         CompletionFilter completion = CompletionFilter::All;
         QString titleContains;          // literal substring, case-insensitive for ASCII
+        QString listName;               // exact list name; empty = any list
+        std::optional<QDateTime> dueFrom;   // due_at >= dueFrom (tasks without a due date never match)
+        std::optional<QDateTime> dueBefore; // due_at <  dueBefore
     };
 
     // `database` must outlive the repository.
@@ -30,6 +34,8 @@ public:
     // Tasks matching `query`, oldest (lowest id) first.
     bool loadTasks(const Query &query, QList<Task> *tasks);
     bool getTask(qint64 id, Task *task);
+    // Distinct list names in use, sorted case-insensitively.
+    bool listNames(QStringList *names);
 
     // Title is trimmed and must be non-empty; priority must be 0..2.
     // `draft.id`, createdAt and updatedAt are ignored. Returns the stored task.

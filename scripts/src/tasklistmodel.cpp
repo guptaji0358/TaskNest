@@ -74,35 +74,82 @@ int TaskListModel::rowOfId(qint64 id) const
     return -1;
 }
 
-bool TaskListModel::reload(const TaskRepository::Query &query)
+TaskRepository::Query TaskListModel::effectiveQuery(const TaskRepository::Query &base,
+                                                    Scope scope) const
+{
+    TaskRepository::Query query = base;
+    if (scope != List)
+        query.listName.clear();
+
+    // Day boundaries are local midnights; the repository compares them as UTC.
+    const QDate today = QDate::currentDate();
+    switch (scope) {
+    case Today:
+        query.dueFrom = QDateTime(today, QTime(0, 0));
+        query.dueBefore = QDateTime(today.addDays(1), QTime(0, 0));
+        break;
+    case Upcoming:
+        query.dueFrom = QDateTime(today.addDays(1), QTime(0, 0));
+        query.completion = TaskRepository::CompletionFilter::Active;
+        break;
+    case Everything:
+    case List:
+        break;
+    }
+    return query;
+}
+
+bool TaskListModel::reload(const TaskRepository::Query &base, Scope scope)
 {
     // Load first so a failure leaves the current rows untouched.
     QList<Task> loaded;
-    if (!m_repository.loadTasks(query, &loaded))
+    if (!m_repository.loadTasks(effectiveQuery(base, scope), &loaded))
         return reportRepositoryError();
 
     const int oldCount = static_cast<int>(m_tasks.size());
     beginResetModel();
     m_tasks = loaded;
-    m_query = query;
+    m_query = base;
+    m_scope = scope;
     endResetModel();
     if (oldCount != m_tasks.size())
         emit countChanged();
+    refreshListNames();
     return true;
 }
 
 bool TaskListModel::refresh()
 {
-    return reload(m_query);
+    return reload(m_query, m_scope);
+}
+
+bool TaskListModel::setView(int scope, const QString &listName, int completionFilter)
+{
+    if (scope < Everything || scope > List || completionFilter < All || completionFilter > Completed)
+        return reportError(QStringLiteral("Invalid view selection."));
+    if (scope == List && listName.trimmed().isEmpty())
+        return reportError(QStringLiteral("A list name is required."));
+
+    TaskRepository::Query base = m_query;
+    base.completion = static_cast<TaskRepository::CompletionFilter>(completionFilter);
+    base.listName = scope == List ? listName.trimmed() : QString();
+
+    const bool completionChanged = base.completion != m_query.completion;
+    if (!reload(base, static_cast<Scope>(scope)))
+        return false;
+    emit viewChanged();
+    if (completionChanged)
+        emit completionFilterChanged();
+    return true;
 }
 
 void TaskListModel::setCompletionFilter(int filter)
 {
     if (filter < All || filter > Completed || filter == completionFilter())
         return;
-    TaskRepository::Query query = m_query;
-    query.completion = static_cast<TaskRepository::CompletionFilter>(filter);
-    if (reload(query))
+    TaskRepository::Query base = m_query;
+    base.completion = static_cast<TaskRepository::CompletionFilter>(filter);
+    if (reload(base, m_scope))
         emit completionFilterChanged();
 }
 
@@ -110,23 +157,37 @@ void TaskListModel::setSearchText(const QString &text)
 {
     if (text == m_query.titleContains)
         return;
-    TaskRepository::Query query = m_query;
-    query.titleContains = text;
-    if (reload(query))
+    TaskRepository::Query base = m_query;
+    base.titleContains = text;
+    if (reload(base, m_scope))
         emit searchTextChanged();
 }
 
+void TaskListModel::refreshListNames()
+{
+    QStringList names;
+    if (!m_repository.listNames(&names)) {
+        reportRepositoryError();
+        return;
+    }
+    if (names != m_listNames) {
+        m_listNames = names;
+        emit listNamesChanged();
+    }
+}
+
 // Asks the database (so the answer matches SQL semantics exactly) whether the
-// task belongs in the current view. Skipped when no filter is active.
+// task belongs in the current view. Skipped when nothing narrows the view.
 bool TaskListModel::matchesFilter(const Task &task, bool *matches)
 {
-    const bool unfiltered = m_query.completion == TaskRepository::CompletionFilter::All
+    const bool unfiltered = m_scope == Everything
+                            && m_query.completion == TaskRepository::CompletionFilter::All
                             && m_query.titleContains.trimmed().isEmpty();
     if (unfiltered) {
         *matches = true;
         return true;
     }
-    TaskRepository::Query query = m_query;
+    TaskRepository::Query query = effectiveQuery(m_query, m_scope);
     query.id = task.id;
     QList<Task> found;
     if (!m_repository.loadTasks(query, &found))
@@ -138,6 +199,8 @@ bool TaskListModel::matchesFilter(const Task &task, bool *matches)
 // Brings the rows in line with a task that was just stored or modified.
 bool TaskListModel::applyChanged(const Task &task)
 {
+    refreshListNames();
+
     bool matches = false;
     if (!matchesFilter(task, &matches)) {
         // The change is committed; only the view could not be decided.
@@ -227,5 +290,6 @@ bool TaskListModel::removeTask(qint64 id)
         endRemoveRows();
         emit countChanged();
     }
+    refreshListNames();
     return true;
 }

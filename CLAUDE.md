@@ -50,7 +50,7 @@ TaskNest/
 │   ├── src/        # .cpp implementation files with a matching header in include/
 │   ├── include/    # .h/.hpp headers matching files in src/
 │   └── main/       # main.cpp and other entry points without a matching project header
-└── tests/          # Qt Test suites (built by default; run tst_tasknest from the build dir)
+└── tests/          # Qt Test suites (built by default; run tst_tasknest and tst_ui from the build dir, or ctest)
 ```
 
 Rules:

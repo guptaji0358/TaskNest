@@ -49,6 +49,8 @@ qt_add_qml_module(appTaskNest
     VERSION 1.0
     QML_FILES
         scripts/main/Main.qml
+        scripts/main/MainView.qml
+        scripts/main/TaskEditor.qml
 )
 
 target_link_libraries(appTaskNest PRIVATE
