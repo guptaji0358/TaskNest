@@ -272,6 +272,96 @@ bool TaskRepository::setCompleted(qint64 id, bool completed, Task *updated)
     return getTask(id, updated);
 }
 
+namespace {
+
+// " AND id NOT IN (?, ?, ...)" for a non-empty list, else an empty string.
+QString excludeClause(const QList<qint64> &exclude)
+{
+    if (exclude.isEmpty())
+        return QString();
+    return QStringLiteral(" AND id NOT IN (%1)")
+        .arg(QStringList(exclude.size(), QStringLiteral("?")).join(QStringLiteral(", ")));
+}
+
+} // namespace
+
+bool TaskRepository::dueReminders(const QDateTime &now, const QList<qint64> &exclude,
+                                  QList<Task> *tasks)
+{
+    if (!ensureReady())
+        return false;
+
+    QSqlDatabase db = m_database.connection();
+    QSqlQuery select(db);
+    const QString sql = QStringLiteral(
+        "SELECT %1 FROM tasks WHERE reminder_at IS NOT NULL AND reminder_sent = 0 "
+        "AND completed = 0 AND reminder_at <= ?%2 ORDER BY reminder_at ASC, id ASC")
+        .arg(kColumns, excludeClause(exclude));
+    if (!select.prepare(sql))
+        return fail(QStringLiteral("Cannot prepare reminder query: %1").arg(select.lastError().text()));
+    select.addBindValue(Task::timestampToVariant(now));
+    for (qint64 id : exclude)
+        select.addBindValue(id);
+    if (!select.exec())
+        return fail(QStringLiteral("Cannot load reminders: %1").arg(select.lastError().text()));
+
+    QList<Task> result;
+    while (select.next())
+        result.append(taskFromRow(select));
+    if (tasks)
+        *tasks = result;
+    return true;
+}
+
+bool TaskRepository::nextPendingReminder(const QList<qint64> &exclude, Task *task, bool *found)
+{
+    if (found)
+        *found = false;
+    if (!ensureReady())
+        return false;
+
+    QSqlDatabase db = m_database.connection();
+    QSqlQuery select(db);
+    const QString sql = QStringLiteral(
+        "SELECT %1 FROM tasks WHERE reminder_at IS NOT NULL AND reminder_sent = 0 "
+        "AND completed = 0%2 ORDER BY reminder_at ASC, id ASC LIMIT 1")
+        .arg(kColumns, excludeClause(exclude));
+    if (!select.prepare(sql))
+        return fail(QStringLiteral("Cannot prepare reminder query: %1").arg(select.lastError().text()));
+    for (qint64 id : exclude)
+        select.addBindValue(id);
+    if (!select.exec())
+        return fail(QStringLiteral("Cannot load reminders: %1").arg(select.lastError().text()));
+
+    if (select.next()) {
+        if (task)
+            *task = taskFromRow(select);
+        if (found)
+            *found = true;
+    }
+    return true;
+}
+
+bool TaskRepository::markReminderSent(qint64 id, bool *changed)
+{
+    if (changed)
+        *changed = false;
+    if (!ensureReady())
+        return false;
+
+    QSqlDatabase db = m_database.connection();
+    QSqlQuery update(db);
+    if (!update.prepare(QStringLiteral(
+            "UPDATE tasks SET reminder_sent = 1 WHERE id = ? AND reminder_sent = 0")))
+        return fail(QStringLiteral("Cannot prepare update: %1").arg(update.lastError().text()));
+    update.addBindValue(id);
+    if (!update.exec())
+        return fail(QStringLiteral("Cannot record reminder: %1").arg(update.lastError().text()));
+    if (changed)
+        *changed = update.numRowsAffected() > 0;
+    return true;
+}
+
 bool TaskRepository::deleteTask(qint64 id)
 {
     if (!ensureReady())

@@ -2,6 +2,7 @@
 // with a TaskListModel on a temporary database (exposed to QML as `fixture`).
 
 #include "database.h"
+#include "reminderscheduler.h"
 #include "tasklistmodel.h"
 #include "taskrepository.h"
 
@@ -17,22 +18,28 @@ class UiFixture : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QObject *model READ model CONSTANT)
+    Q_PROPERTY(QObject *scheduler READ scheduler CONSTANT)
 
 public:
     UiFixture()
         : m_database(QStringLiteral("ui_test"))
         , m_repository(m_database)
         , m_model(m_repository)
+        , m_scheduler(m_repository)
     {
+        QObject::connect(&m_model, &TaskListModel::tasksMutated, &m_scheduler,
+                         &ReminderScheduler::reschedule);
         m_database.initialize(m_dir.filePath(QStringLiteral("ui.db")));
         m_model.refresh();
     }
 
     QObject *model() { return &m_model; }
+    QObject *scheduler() { return &m_scheduler; }
 
     // Deletes every stored task and returns the model to the default view.
     Q_INVOKABLE bool reset()
     {
+        m_scheduler.stop(); // forget announced reminders from the previous test
         QList<Task> all;
         if (!m_repository.loadTasks({}, &all))
             return false;
@@ -60,6 +67,10 @@ public:
             map[QStringLiteral("priority")] = task.priority;
             map[QStringLiteral("completed")] = task.completed;
             map[QStringLiteral("hasDue")] = task.dueAt.has_value();
+            map[QStringLiteral("hasReminder")] = task.reminderAt.has_value();
+            map[QStringLiteral("reminderSent")] = task.reminderSent;
+            map[QStringLiteral("reminderAt")] =
+                task.reminderAt ? QVariant(task.reminderAt->toLocalTime()) : QVariant();
             map[QStringLiteral("dueAt")] = task.dueAt ? QVariant(task.dueAt->toLocalTime()) : QVariant();
             result << map;
         }
@@ -74,6 +85,7 @@ private:
     Database m_database;
     TaskRepository m_repository;
     TaskListModel m_model;
+    ReminderScheduler m_scheduler;
 };
 
 class Setup : public QObject

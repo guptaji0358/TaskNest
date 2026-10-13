@@ -35,6 +35,10 @@ QVariant TaskListModel::data(const QModelIndex &index, int role) const
         return task.dueAt ? QVariant(task.dueAt->toLocalTime()) : QVariant();
     case CompletedRole:
         return task.completed;
+    case ReminderAtRole:
+        return task.reminderAt ? QVariant(task.reminderAt->toLocalTime()) : QVariant();
+    case ReminderSentRole:
+        return task.reminderSent;
     default:
         return {};
     }
@@ -50,6 +54,8 @@ QHash<int, QByteArray> TaskListModel::roleNames() const
         {PriorityRole, "priority"},
         {DueAtRole, "dueAt"},
         {CompletedRole, "completed"},
+        {ReminderAtRole, "reminderAt"},
+        {ReminderSentRole, "reminderSent"},
     };
 }
 
@@ -200,6 +206,7 @@ bool TaskListModel::matchesFilter(const Task &task, bool *matches)
 bool TaskListModel::applyChanged(const Task &task)
 {
     refreshListNames();
+    emit tasksMutated();
 
     bool matches = false;
     if (!matchesFilter(task, &matches)) {
@@ -254,7 +261,21 @@ bool TaskListModel::addTask(const QString &title, const QString &notes, const QS
 bool TaskListModel::updateTask(qint64 id, const QString &title, const QString &notes,
                                const QString &listName, int priority, const QDateTime &dueAt)
 {
-    // Start from the stored task so fields not exposed here (reminder) survive.
+    return applyUpdate(id, title, notes, listName, priority, dueAt, nullptr);
+}
+
+bool TaskListModel::updateTaskWithReminder(qint64 id, const QString &title, const QString &notes,
+                                           const QString &listName, int priority,
+                                           const QDateTime &dueAt, const QDateTime &reminderAt)
+{
+    return applyUpdate(id, title, notes, listName, priority, dueAt, &reminderAt);
+}
+
+bool TaskListModel::applyUpdate(qint64 id, const QString &title, const QString &notes,
+                                const QString &listName, int priority, const QDateTime &dueAt,
+                                const QDateTime *reminderAt)
+{
+    // Start from the stored task so fields not passed here survive.
     Task task;
     if (!m_repository.getTask(id, &task))
         return reportRepositoryError();
@@ -263,6 +284,10 @@ bool TaskListModel::updateTask(qint64 id, const QString &title, const QString &n
     task.listName = listName;
     task.priority = priority;
     task.dueAt = dueAt.isValid() ? std::optional<QDateTime>(dueAt) : std::nullopt;
+    if (reminderAt) {
+        task.reminderAt = reminderAt->isValid() ? std::optional<QDateTime>(*reminderAt)
+                                                : std::nullopt;
+    }
 
     Task updated;
     if (!m_repository.updateTask(task, &updated))
@@ -291,5 +316,6 @@ bool TaskListModel::removeTask(qint64 id)
         emit countChanged();
     }
     refreshListNames();
+    emit tasksMutated();
     return true;
 }

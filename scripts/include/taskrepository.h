@@ -47,6 +47,18 @@ public:
     bool setCompleted(qint64 id, bool completed, Task *updated = nullptr);
     bool deleteTask(qint64 id);
 
+    // ---- reminders -------------------------------------------------------
+    // "Pending" = has a reminder time, not yet sent, task not completed.
+    // `exclude` lists task ids to skip (reminders already being shown).
+
+    // The pending reminder with the earliest time. `*found` tells whether one exists.
+    bool nextPendingReminder(const QList<qint64> &exclude, Task *task, bool *found);
+    // Pending reminders with reminder_at <= now, earliest first.
+    bool dueReminders(const QDateTime &now, const QList<qint64> &exclude, QList<Task> *tasks);
+    // Marks the reminder as sent; *changed is false if it was already sent or
+    // the task no longer exists (so a reminder is never recorded twice).
+    bool markReminderSent(qint64 id, bool *changed = nullptr);
+
     QString lastError() const { return m_lastError; }
 
 private:

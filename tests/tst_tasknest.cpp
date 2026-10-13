@@ -2,10 +2,12 @@
 // Every test works on a database file inside a temporary directory.
 
 #include "database.h"
+#include "reminderscheduler.h"
 #include "task.h"
 #include "tasklistmodel.h"
 #include "taskrepository.h"
 
+#include <QAbstractEventDispatcher>
 #include <QAbstractItemModelTester>
 #include <QCryptographicHash>
 #include <QFile>
@@ -16,6 +18,10 @@
 #include <QTemporaryDir>
 #include <QTimeZone>
 #include <QtTest>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -83,6 +89,47 @@ Task draft(const QString &title)
     task.title = title;
     return task;
 }
+
+// A database + repository + scheduler driven by a fake clock.
+struct SchedulerFixture
+{
+    Database db;
+    TaskRepository repo;
+    ReminderScheduler scheduler;
+    QDateTime now;
+    QList<qint64> fired;
+    QList<qint64> cancelled;
+    QStringList errors;
+    bool ok = false;
+
+    SchedulerFixture(const QString &file, const QDateTime &start)
+        : db(QStringLiteral("rem_test"))
+        , repo(db)
+        , scheduler(repo)
+        , now(start)
+    {
+        ok = db.initialize(file);
+        scheduler.setClock([this] { return now; });
+        QObject::connect(&scheduler, &ReminderScheduler::reminderFired,
+                         [this](qint64 id, const QString &, const QDateTime &) { fired << id; });
+        QObject::connect(&scheduler, &ReminderScheduler::reminderCancelled,
+                         [this](qint64 id) { cancelled << id; });
+        QObject::connect(&scheduler, &ReminderScheduler::errorOccurred,
+                         [this](const QString &message) { errors << message; });
+    }
+
+    // Adds a task whose reminder is `minutesFromNow` after the fake clock.
+    qint64 addReminder(const QString &title, int minutesFromNow)
+    {
+        Task task;
+        task.title = title;
+        task.reminderAt = now.addSecs(minutesFromNow * 60);
+        Task created;
+        return repo.addTask(task, &created) ? created.id : 0;
+    }
+};
+
+const QDateTime kStart(QDate(2030, 6, 1), QTime(12, 0), QTimeZone::utc());
 
 } // namespace
 
@@ -674,6 +721,372 @@ private slots:
         QCOMPARE(model.rowCount(), 1);
         QVERIFY(!model.addTask("nope"));
     }
+
+    // ---- reminders: storage and editing ----------------------------------
+
+    void reminder_storedAsUtcAndShownAsLocal()
+    {
+        const QString file = path("rem_utc.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        QVERIFY(model.refresh());
+
+        // 14:30 at UTC+05:30 is 09:00 UTC.
+        const QDateTime offset(QDate(2030, 3, 4), QTime(14, 30),
+                               QTimeZone::fromSecondsAheadOfUtc(5 * 3600 + 1800));
+        Task task = draft("with reminder");
+        task.reminderAt = offset;
+        Task created;
+        QVERIFY(repo.addTask(task, &created));
+
+        QCOMPARE(scalar(file, "SELECT reminder_at FROM tasks").toString(),
+                 QString("2030-03-04T09:00:00.000Z"));
+        QCOMPARE(scalar(file, "SELECT reminder_sent FROM tasks").toInt(), 0);
+
+        QVERIFY(model.refresh());
+        const QVariant shown = model.data(model.index(0), TaskListModel::ReminderAtRole);
+        QVERIFY(shown.isValid());
+        QCOMPARE(shown.toDateTime().timeSpec(), Qt::LocalTime);
+        QCOMPARE(shown.toDateTime().toUTC(), offset.toUTC());
+        QCOMPARE(shown.toDateTime().toMSecsSinceEpoch(), offset.toMSecsSinceEpoch());
+    }
+
+    void reminder_updateClearAndPreserve()
+    {
+        const QString file = path("rem_edit.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        QVERIFY(model.refresh());
+
+        const QDateTime first(QDate(2030, 1, 1), QTime(8, 0), QTimeZone::utc());
+        const QDateTime second(QDate(2030, 1, 2), QTime(8, 0), QTimeZone::utc());
+        QVERIFY(model.addTask("t"));
+        const qint64 id = model.data(model.index(0), TaskListModel::IdRole).toLongLong();
+
+        // set
+        QVERIFY(model.updateTaskWithReminder(id, "t", "", "Inbox", 0, QDateTime(), first));
+        QCOMPARE(scalar(file, "SELECT reminder_at FROM tasks").toString(),
+                 QString("2030-01-01T08:00:00.000Z"));
+
+        // pretend it was delivered, then edit unrelated fields: reminder and sent flag stay
+        QVERIFY(repo.markReminderSent(id));
+        QVERIFY(model.updateTask(id, "renamed", "notes", "Work", 2));
+        QCOMPARE(scalar(file, "SELECT reminder_at FROM tasks").toString(),
+                 QString("2030-01-01T08:00:00.000Z"));
+        QCOMPARE(scalar(file, "SELECT reminder_sent FROM tasks").toInt(), 1);
+
+        // same reminder through the full update: still sent
+        QVERIFY(model.updateTaskWithReminder(id, "renamed", "notes", "Work", 2, QDateTime(), first));
+        QCOMPARE(scalar(file, "SELECT reminder_sent FROM tasks").toInt(), 1);
+
+        // new time: re-armed
+        QVERIFY(model.updateTaskWithReminder(id, "renamed", "notes", "Work", 2, QDateTime(), second));
+        QCOMPARE(scalar(file, "SELECT reminder_at FROM tasks").toString(),
+                 QString("2030-01-02T08:00:00.000Z"));
+        QCOMPARE(scalar(file, "SELECT reminder_sent FROM tasks").toInt(), 0);
+
+        // clear
+        QVERIFY(model.updateTaskWithReminder(id, "renamed", "notes", "Work", 2, QDateTime(), QDateTime()));
+        QVERIFY(scalar(file, "SELECT reminder_at FROM tasks").isNull());
+        QCOMPARE(scalar(file, "SELECT reminder_sent FROM tasks").toInt(), 0);
+    }
+
+    // ---- reminders: scheduler ----------------------------------------------
+
+    void scheduler_choosesNearestPendingReminder()
+    {
+        SchedulerFixture f(path("sched_nearest.db"), kStart);
+        QVERIFY(f.ok);
+        f.addReminder("later", 90);
+        const qint64 soon = f.addReminder("soon", 30);
+        f.addReminder("latest", 600);
+        QVERIFY(soon > 0);
+
+        f.scheduler.reschedule();
+        QVERIFY(f.scheduler.isTimerActive());
+        QCOMPARE(f.scheduler.nextReminderAt(), kStart.addSecs(30 * 60));
+        QCOMPARE(f.scheduler.timerInterval(), 30 * 60 * 1000);
+        QCOMPARE(f.fired.size(), 0);
+    }
+
+    void scheduler_ignoresCompletedAndSent()
+    {
+        SchedulerFixture f(path("sched_ignore.db"), kStart);
+        QVERIFY(f.ok);
+        const qint64 done = f.addReminder("done", 10);
+        const qint64 sent = f.addReminder("sent", 20);
+        f.addReminder("pending", 40);
+        QVERIFY(f.repo.setCompleted(done, true));
+        QVERIFY(f.repo.markReminderSent(sent));
+
+        f.scheduler.reschedule();
+        QCOMPARE(f.scheduler.nextReminderAt(), kStart.addSecs(40 * 60));
+
+        // and nothing pending at all: no timer
+        f.now = kStart.addSecs(3600 * 24);
+        f.scheduler.processDue();
+        QCOMPARE(f.fired.size(), 1);
+        QVERIFY(f.scheduler.acknowledge(f.fired.first()));
+        QVERIFY(!f.scheduler.isTimerActive());
+        QVERIFY(!f.scheduler.nextReminderAt().isValid());
+    }
+
+    void scheduler_reschedulesAfterTaskMutations()
+    {
+        SchedulerFixture f(path("sched_mutate.db"), kStart);
+        QVERIFY(f.ok);
+        TaskListModel model(f.repo);
+        QObject::connect(&model, &TaskListModel::tasksMutated, &f.scheduler, &ReminderScheduler::reschedule);
+        QVERIFY(model.refresh());
+
+        Task farTask = draft("far");
+        farTask.reminderAt = kStart.addSecs(120 * 60);
+        QVERIFY(f.repo.addTask(farTask));
+        QVERIFY(model.refresh());
+        f.scheduler.reschedule();
+        QCOMPARE(f.scheduler.nextReminderAt(), kStart.addSecs(120 * 60));
+
+        // add: earlier reminder takes over
+        QVERIFY(model.addTask("near"));
+        const qint64 nearId = model.data(model.index(1), TaskListModel::IdRole).toLongLong();
+        QVERIFY(model.updateTaskWithReminder(nearId, "near", "", "Inbox", 0, QDateTime(),
+                                             kStart.addSecs(15 * 60)));
+        QCOMPARE(f.scheduler.nextReminderAt(), kStart.addSecs(15 * 60));
+
+        // change its time
+        QVERIFY(model.updateTaskWithReminder(nearId, "near", "", "Inbox", 0, QDateTime(),
+                                             kStart.addSecs(200 * 60)));
+        QCOMPARE(f.scheduler.nextReminderAt(), kStart.addSecs(120 * 60));
+
+        // complete the "far" one: the nearer remaining one is next
+        const qint64 farId = model.data(model.index(0), TaskListModel::IdRole).toLongLong();
+        QVERIFY(model.setCompleted(farId, true));
+        QCOMPARE(f.scheduler.nextReminderAt(), kStart.addSecs(200 * 60));
+
+        // delete it: nothing left to schedule
+        QVERIFY(model.removeTask(nearId));
+        QVERIFY(!f.scheduler.isTimerActive());
+    }
+
+    void scheduler_announcesOverdueRemindersOldestFirstOnce()
+    {
+        SchedulerFixture f(path("sched_overdue.db"), kStart);
+        QVERIFY(f.ok);
+        const qint64 newer = f.addReminder("newer", -10);
+        const qint64 older = f.addReminder("older", -60 * 24 * 30);
+        const qint64 future = f.addReminder("future", 50);
+
+        f.scheduler.reschedule();
+        QVERIFY(f.scheduler.isTimerActive());
+        QCOMPARE(f.scheduler.timerInterval(), 0); // due now: fire on the next loop turn
+
+        f.scheduler.processDue();
+        QCOMPARE(f.fired, (QList<qint64>{older, newer}));
+        QVERIFY(!f.fired.contains(future));
+        // next scheduled is the future one; the in-flight ones are not re-armed
+        QCOMPARE(f.scheduler.nextReminderAt(), kStart.addSecs(50 * 60));
+        QCOMPARE(f.scheduler.timerInterval(), 50 * 60 * 1000);
+    }
+
+    void scheduler_neverAnnouncesTheSameReminderTwice()
+    {
+        const QString file = path("sched_dupes.db");
+        qint64 id = 0;
+        {
+            SchedulerFixture f(file, kStart);
+            QVERIFY(f.ok);
+            id = f.addReminder("once", -5);
+
+            f.scheduler.reschedule();
+            f.scheduler.processDue();
+            f.scheduler.processDue();      // delayed/duplicate timer
+            f.scheduler.reschedule();      // refresh / app re-activated
+            f.scheduler.reschedule();
+            f.scheduler.processDue();
+            QCOMPARE(f.fired, QList<qint64>{id});
+            QCOMPARE(f.scheduler.inFlightIds(), QList<qint64>{id});
+
+            QVERIFY(f.scheduler.acknowledge(id));
+            QVERIFY(f.scheduler.acknowledge(id)); // harmless repeat
+            f.scheduler.processDue();
+            f.scheduler.reschedule();
+            QCOMPARE(f.fired.size(), 1);
+            QCOMPARE(scalar(file, "SELECT reminder_sent FROM tasks").toInt(), 1);
+        }
+        // restart after acknowledgement: not announced again
+        SchedulerFixture again(file, kStart.addSecs(3600));
+        QVERIFY(again.ok);
+        again.scheduler.reschedule();
+        again.scheduler.processDue();
+        QCOMPARE(again.fired.size(), 0);
+    }
+
+    void scheduler_unacknowledgedReminderSurvivesRestart()
+    {
+        const QString file = path("sched_restart.db");
+        qint64 id = 0;
+        {
+            SchedulerFixture f(file, kStart);
+            QVERIFY(f.ok);
+            id = f.addReminder("persist", 20);
+            f.addReminder("also", 45);
+            f.scheduler.reschedule();
+            f.now = kStart.addSecs(25 * 60);
+            f.scheduler.processDue();
+            QCOMPARE(f.fired, QList<qint64>{id}); // shown, but app closes before it is handled
+        }
+        SchedulerFixture again(file, kStart.addSecs(30 * 60));
+        QVERIFY(again.ok);
+        again.scheduler.reschedule();
+        QCOMPARE(again.scheduler.timerInterval(), 0); // still pending: announced again
+        again.scheduler.processDue();
+        QCOMPARE(again.fired, QList<qint64>{id});
+        QCOMPARE(again.scheduler.nextReminderAt(), kStart.addSecs(45 * 60));
+    }
+
+    void scheduler_completingAnAnnouncedTaskCancelsItsReminder()
+    {
+        SchedulerFixture f(path("sched_cancel.db"), kStart);
+        QVERIFY(f.ok);
+        const qint64 id = f.addReminder("cancel me", -1);
+        f.scheduler.reschedule();
+        f.scheduler.processDue();
+        QCOMPARE(f.fired, QList<qint64>{id});
+
+        QVERIFY(f.repo.setCompleted(id, true));
+        f.scheduler.reschedule();
+        QCOMPARE(f.cancelled, QList<qint64>{id});
+        QVERIFY(f.scheduler.inFlightIds().isEmpty());
+
+        // re-opening the task must not replay a reminder the user already acted on
+        QVERIFY(f.repo.setCompleted(id, false));
+        f.scheduler.reschedule();
+        f.scheduler.processDue();
+        QCOMPARE(f.fired.size(), 1);
+    }
+
+    void scheduler_changedReminderTimeCancelsAnnouncement()
+    {
+        SchedulerFixture f(path("sched_changed.db"), kStart);
+        QVERIFY(f.ok);
+        const qint64 id = f.addReminder("moved", -1);
+        f.scheduler.reschedule();
+        f.scheduler.processDue();
+        QCOMPARE(f.fired.size(), 1);
+
+        Task task;
+        QVERIFY(f.repo.getTask(id, &task));
+        task.reminderAt = kStart.addSecs(3 * 3600);
+        QVERIFY(f.repo.updateTask(task));
+        f.scheduler.reschedule();
+        QCOMPARE(f.cancelled, QList<qint64>{id});
+        QCOMPARE(f.scheduler.nextReminderAt(), kStart.addSecs(3 * 3600));
+    }
+
+    void scheduler_databaseErrorsNeverMarkAsSent()
+    {
+        const QString file = path("sched_error.db");
+        SchedulerFixture f(file, kStart);
+        QVERIFY(f.ok);
+        const qint64 id = f.addReminder("fragile", -1);
+        f.scheduler.reschedule();
+        f.scheduler.processDue();
+        QCOMPARE(f.fired, QList<qint64>{id});
+
+        f.db.shutdown();                       // connection lost
+        QVERIFY(!f.scheduler.acknowledge(id)); // must fail ...
+        QVERIFY(!f.errors.isEmpty());
+        QCOMPARE(f.scheduler.inFlightIds(), QList<qint64>{id}); // ... and stay pending
+
+        // while the database is down, scheduling backs off instead of spinning
+        f.errors.clear();
+        f.scheduler.processDue();
+        QVERIFY(!f.errors.isEmpty());
+        QVERIFY(f.scheduler.isTimerActive());
+        QVERIFY(f.scheduler.timerInterval() >= 1000);
+
+        QCOMPARE(scalar(file, "SELECT reminder_sent FROM tasks").toInt(), 0);
+
+        // recovery: reopen and the reminder is still there
+        QVERIFY(f.db.initialize(file));
+        QVERIFY(f.scheduler.acknowledge(id));
+        QCOMPARE(scalar(file, "SELECT reminder_sent FROM tasks").toInt(), 1);
+    }
+
+    void scheduler_usesOneSingleShotTimerAndNeverPolls()
+    {
+        SchedulerFixture f(path("sched_poll.db"), kStart);
+        QVERIFY(f.ok);
+        f.scheduler.reschedule();
+        QVERIFY(!f.scheduler.isTimerActive()); // nothing pending: nothing runs
+
+        f.addReminder("tomorrow", 24 * 60);
+        f.scheduler.reschedule();
+        QVERIFY(f.scheduler.isTimerActive());
+        // armed once for the whole wait, not a short repeating tick
+        QCOMPARE(f.scheduler.timerInterval(), 24 * 60 * 60 * 1000);
+        const QList<QTimer *> timers = f.scheduler.findChildren<QTimer *>();
+        QVERIFY(timers.isEmpty()); // the only timer is the member, which is single-shot
+
+        QTest::qWait(150);
+        QCOMPARE(f.fired.size(), 0);
+        QCOMPARE(f.scheduler.timerInterval(), 24 * 60 * 60 * 1000);
+
+        f.scheduler.stop();
+        QVERIFY(!f.scheduler.isTimerActive());
+    }
+
+    void scheduler_realTimerFiresOnceAndStops()
+    {
+        // Uses the real clock and a real timer, ~0.25 s.
+        const QString file = path("sched_real.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        ReminderScheduler scheduler(repo);
+        QSignalSpy fired(&scheduler, &ReminderScheduler::reminderFired);
+
+        Task task = draft("real");
+        task.reminderAt = QDateTime::currentDateTimeUtc().addMSecs(250);
+        QVERIFY(repo.addTask(task));
+        scheduler.reschedule();
+        QVERIFY(scheduler.isTimerActive());
+
+        QVERIFY(fired.wait(3000));
+        QCOMPARE(fired.size(), 1);
+        QVERIFY(!scheduler.isTimerActive()); // in flight, nothing else pending
+        QTest::qWait(100);
+        QCOMPARE(fired.size(), 1);
+    }
+
+#ifdef Q_OS_WIN
+    void scheduler_systemResumeTriggersReschedule()
+    {
+        SchedulerFixture f(path("sched_resume.db"), kStart);
+        QVERIFY(f.ok);
+        f.addReminder("slept through", 30);
+        f.scheduler.watchSystemResume();
+        f.scheduler.reschedule();
+        QCOMPARE(f.scheduler.timerInterval(), 30 * 60 * 1000);
+
+        // The computer slept for two hours; the clock jumped, the timer did not.
+        f.now = kStart.addSecs(2 * 3600);
+
+        MSG msg = {};
+        msg.message = WM_POWERBROADCAST;
+        msg.wParam = PBT_APMRESUMEAUTOMATIC;
+        qintptr result = 0;
+        QAbstractEventDispatcher::instance()->filterNativeEvent("windows_generic_MSG", &msg, &result);
+
+        QCOMPARE(f.scheduler.timerInterval(), 0); // recalculated: overdue, fire now
+        f.scheduler.processDue();
+        QCOMPARE(f.fired.size(), 1);
+    }
+#endif
 
     // ---- views: due date ranges and lists ---------------------------------
 

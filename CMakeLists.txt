@@ -16,10 +16,12 @@ qt_add_library(tasknestcore STATIC
     scripts/src/database.cpp
     scripts/src/taskrepository.cpp
     scripts/src/tasklistmodel.cpp
+    scripts/src/reminderscheduler.cpp
     scripts/include/database.h
     scripts/include/task.h
     scripts/include/taskrepository.h
     scripts/include/tasklistmodel.h
+    scripts/include/reminderscheduler.h
 )
 
 target_include_directories(tasknestcore PUBLIC

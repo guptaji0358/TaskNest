@@ -36,37 +36,45 @@ Dialog {
             dateField.text = ""
             timeField.text = ""
         }
+        const reminder = row.reminderAt
+        if (reminder && !isNaN(reminder.getTime())) {
+            reminderDateField.text = Qt.formatDate(reminder, "yyyy-MM-dd")
+            reminderTimeField.text = Qt.formatTime(reminder, "HH:mm")
+        } else {
+            reminderDateField.text = ""
+            reminderTimeField.text = ""
+        }
         errorText = ""
         open()
         titleField.forceActiveFocus()
     }
 
-    // Returns { error: string } or { due: Date } (invalid Date = no due date).
-    function parseDue() {
-        const dateText = dateField.text.trim()
-        const timeText = timeField.text.trim()
+    // Parses a local date + optional time. Both blank means "none".
+    // Returns { error: string } or { value: Date } (invalid Date = none).
+    // `label` names the field in messages; a missing time becomes hours:minutes.
+    function parseDateTime(dateText, timeText, label, hours, minutes) {
+        dateText = dateText.trim()
+        timeText = timeText.trim()
         if (dateText === "" && timeText === "")
-            return { due: new Date(NaN) }
+            return { value: new Date(NaN) }
         if (dateText === "")
-            return { error: "Enter a due date, or clear the time." }
+            return { error: "Enter a " + label.toLowerCase() + " date, or clear the time." }
 
         const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText)
         if (!d)
-            return { error: "Due date must look like 2026-12-31." }
-        let hours = 23
-        let minutes = 59
+            return { error: label + " date must look like 2026-12-31." }
         if (timeText !== "") {
             const t = /^(\d{1,2}):(\d{2})$/.exec(timeText)
             if (!t || Number(t[1]) > 23 || Number(t[2]) > 59)
-                return { error: "Time must look like 14:30 (24-hour)." }
+                return { error: label + " time must look like 14:30 (24-hour)." }
             hours = Number(t[1])
             minutes = Number(t[2])
         }
         const date = new Date(Number(d[1]), Number(d[2]) - 1, Number(d[3]), hours, minutes, 0, 0)
         if (date.getFullYear() !== Number(d[1]) || date.getMonth() !== Number(d[2]) - 1
                 || date.getDate() !== Number(d[3]))
-            return { error: "That date does not exist." }
-        return { due: date }
+            return { error: "That " + label.toLowerCase() + " date does not exist." }
+        return { value: date }
     }
 
     function save() {
@@ -76,14 +84,23 @@ Dialog {
             titleField.forceActiveFocus()
             return
         }
-        const parsed = parseDue()
-        if (parsed.error) {
-            errorText = parsed.error
+        // Date-only due dates mean end of day; date-only reminders mean 09:00.
+        const due = parseDateTime(dateField.text, timeField.text, "Due", 23, 59)
+        if (due.error) {
+            errorText = due.error
             dateField.forceActiveFocus()
             return
         }
-        const ok = taskModel.updateTask(taskId, titleField.text, notesArea.text,
-                                        listField.text, priorityBox.currentIndex, parsed.due)
+        const reminder = parseDateTime(reminderDateField.text, reminderTimeField.text,
+                                       "Reminder", 9, 0)
+        if (reminder.error) {
+            errorText = reminder.error
+            reminderDateField.forceActiveFocus()
+            return
+        }
+        const ok = taskModel.updateTaskWithReminder(taskId, titleField.text, notesArea.text,
+                                                    listField.text, priorityBox.currentIndex,
+                                                    due.value, reminder.value)
         if (ok)
             close()
         else
@@ -166,6 +183,36 @@ Dialog {
                     objectName: "editorTime"
                     Layout.fillWidth: true
                     placeholderText: "HH:MM"
+                    selectByMouse: true
+                    onAccepted: editor.save()
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Label { text: "Reminder date" }
+                TextField {
+                    id: reminderDateField
+                    objectName: "editorReminderDate"
+                    Layout.fillWidth: true
+                    placeholderText: "YYYY-MM-DD (optional)"
+                    selectByMouse: true
+                    onAccepted: editor.save()
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                Label { text: "Reminder time" }
+                TextField {
+                    id: reminderTimeField
+                    objectName: "editorReminderTime"
+                    Layout.fillWidth: true
+                    placeholderText: "HH:MM (default 09:00)"
                     selectByMouse: true
                     onAccepted: editor.save()
                 }

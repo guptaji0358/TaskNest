@@ -84,7 +84,8 @@ TestCase {
         view = createTemporaryObject(viewComponent, tc, {
             width: tc.width, height: tc.height,
             databaseError: "", databasePath: "C:/test/tasknest.db",
-            taskModel: fixture.model
+            taskModel: fixture.model,
+            reminderScheduler: fixture.scheduler
         })
         verify(view !== null, viewComponent.errorString())
         waitForRendering(view)
@@ -235,7 +236,7 @@ TestCase {
         find("editorDate").text = "2030-02-10"
         find("editorTime").text = "25:99"
         mouseClick(find("editorSave"))
-        verify(err.text.indexOf("Time") >= 0)
+        verify(err.text.indexOf("time must") >= 0)
 
         find("editorDate").text = ""
         find("editorTime").text = "10:00"
@@ -419,5 +420,133 @@ TestCase {
         const p = del.mapToItem(r, 0, 0)
         verify(p.x + del.width <= r.width + 0.5, "row buttons fit inside the row")
         verify(find("taskTitle", r).width > 100, "title keeps usable width")
+    }
+
+    // ---- reminders ------------------------------------------------------------------
+
+    function test_editorSetsShowsAndClearsReminder() {
+        seed("Remind me")
+        let editor = openEditor()
+        compare(find("editorReminderDate").text, "")
+        find("editorReminderDate").text = "2031-05-06"
+        find("editorReminderTime").text = "07:45"
+        mouseClick(find("editorSave"))
+        tryCompare(editor, "visible", false)
+
+        let t = fixture.stored()[0]
+        verify(t.hasReminder)
+        compare(t.reminderAt.getFullYear(), 2031)
+        compare(t.reminderAt.getMonth(), 4)
+        compare(t.reminderAt.getDate(), 6)
+        compare(t.reminderAt.getHours(), 7)
+        compare(t.reminderAt.getMinutes(), 45)
+        compare(t.reminderSent, false)
+        verify(find("reminderLabel", row(0)).visible)
+
+        // reopening shows the stored (local) time; saving untouched keeps it
+        editor = openEditor()
+        compare(find("editorReminderDate").text, "2031-05-06")
+        compare(find("editorReminderTime").text, "07:45")
+        find("editorTitle").text = "Renamed"
+        mouseClick(find("editorSave"))
+        tryCompare(editor, "visible", false)
+        t = fixture.stored()[0]
+        compare(t.title, "Renamed")
+        compare(t.reminderAt.getHours(), 7)
+
+        // clear
+        editor = openEditor()
+        find("editorReminderDate").text = ""
+        find("editorReminderTime").text = ""
+        mouseClick(find("editorSave"))
+        tryCompare(editor, "visible", false)
+        compare(fixture.stored()[0].hasReminder, false)
+        compare(find("reminderLabel", row(0)).visible, false)
+    }
+
+    function test_reminderDateOnlyDefaultsToNineAndValidates() {
+        seed("Date only")
+        const editor = openEditor()
+        const err = find("editorError")
+
+        find("editorReminderDate").text = "2031-01-01"
+        mouseClick(find("editorSave"))
+        tryCompare(editor, "visible", false)
+        compare(fixture.stored()[0].reminderAt.getHours(), 9)
+        compare(fixture.stored()[0].reminderAt.getMinutes(), 0)
+
+        openEditor()
+        find("editorReminderDate").text = "yesterday"
+        mouseClick(find("editorSave"))
+        verify(err.text.indexOf("Reminder date") >= 0)
+        find("editorReminderDate").text = "2031-02-30"
+        mouseClick(find("editorSave"))
+        verify(err.text.indexOf("does not exist") >= 0)
+        find("editorReminderDate").text = "2031-02-03"
+        find("editorReminderTime").text = "7pm"
+        mouseClick(find("editorSave"))
+        verify(err.text.indexOf("Reminder time") >= 0)
+        find("editorReminderDate").text = ""
+        find("editorReminderTime").text = "08:00"
+        mouseClick(find("editorSave"))
+        verify(err.text.indexOf("reminder date") >= 0)
+        compare(view.editorDialog.visible, true)
+        mouseClick(find("editorCancel"))
+        // nothing from the failed attempts was stored
+        compare(fixture.stored()[0].reminderAt.getDate(), 1)
+    }
+
+    function test_cancelKeepsReminder() {
+        seed("Keep reminder")
+        verify(fixture.model.updateTaskWithReminder(fixture.stored()[0].id, "Keep reminder", "", "Inbox",
+                                                    0, new Date(NaN), new Date(2032, 0, 2, 3, 4)))
+        const editor = openEditor()
+        find("editorReminderDate").text = ""
+        find("editorReminderTime").text = ""
+        mouseClick(find("editorCancel"))
+        tryCompare(editor, "visible", false)
+        compare(fixture.stored()[0].hasReminder, true)
+        compare(fixture.stored()[0].reminderAt.getMinutes(), 4)
+    }
+
+    function test_firedReminderShowsBannerAndDismissStoresIt() {
+        seed("Pay rent")
+        const id = fixture.stored()[0].id
+        const past = new Date(Date.now() - 60 * 1000)
+        verify(fixture.model.updateTaskWithReminder(id, "Pay rent", "", "Inbox", 0, new Date(NaN), past))
+
+        // The scheduler (driven by the model's change signal) announces it.
+        tryVerify(function () { return find("reminderBanner") !== null }, 3000)
+        verify(find("reminderText").text.indexOf("Pay rent") >= 0)
+        compare(fixture.stored()[0].reminderSent, false) // not "sent" until handled
+
+        mouseClick(find("reminderDismiss"))
+        tryVerify(function () { return find("reminderBanner") === null })
+        compare(fixture.stored()[0].reminderSent, true)
+        compare(fixture.stored()[0].completed, false)
+    }
+
+    function test_reminderCompleteButtonCompletesTask() {
+        seed("Call back")
+        const id = fixture.stored()[0].id
+        verify(fixture.model.updateTaskWithReminder(id, "Call back", "", "Inbox", 0, new Date(NaN),
+                                                    new Date(Date.now() - 1000)))
+        tryVerify(function () { return find("reminderBanner") !== null }, 3000)
+        waitForRendering(view) // let the banner's layout settle before clicking in it
+        mouseClick(find("reminderComplete"))
+        tryVerify(function () { return find("reminderBanner") === null })
+        compare(fixture.stored()[0].completed, true)
+        compare(fixture.stored()[0].reminderSent, true)
+    }
+
+    function test_completingTaskRemovesItsBanner() {
+        seed("Done elsewhere")
+        const id = fixture.stored()[0].id
+        verify(fixture.model.updateTaskWithReminder(id, "Done elsewhere", "", "Inbox", 0, new Date(NaN),
+                                                    new Date(Date.now() - 1000)))
+        tryVerify(function () { return find("reminderBanner") !== null }, 3000)
+        waitForRendering(view)
+        mouseClick(find("taskCheck", row(0)))
+        tryVerify(function () { return find("reminderBanner") === null })
     }
 }

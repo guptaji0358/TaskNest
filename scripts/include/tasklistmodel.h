@@ -37,6 +37,8 @@ public:
         PriorityRole,
         DueAtRole,
         CompletedRole,
+        ReminderAtRole,   // QDateTime (local time) or null
+        ReminderSentRole,
     };
 
     enum CompletionFilter { All, Active, Completed };
@@ -78,6 +80,11 @@ public:
     Q_INVOKABLE bool updateTask(qint64 id, const QString &title, const QString &notes,
                                 const QString &listName, int priority,
                                 const QDateTime &dueAt = QDateTime());
+    // Like updateTask, and also sets the reminder; an invalid `reminderAt`
+    // clears it. (updateTask leaves the stored reminder untouched.)
+    Q_INVOKABLE bool updateTaskWithReminder(qint64 id, const QString &title, const QString &notes,
+                                            const QString &listName, int priority,
+                                            const QDateTime &dueAt, const QDateTime &reminderAt);
     Q_INVOKABLE bool setCompleted(qint64 id, bool completed);
     Q_INVOKABLE bool removeTask(qint64 id);
 
@@ -88,6 +95,9 @@ signals:
     void searchTextChanged();
     void viewChanged();
     void listNamesChanged();
+    // Emitted after any successful add/update/complete/delete, whether or not
+    // the change is visible in the current view.
+    void tasksMutated();
 
 private:
     // `base` holds completion, search text and list name; the date range
@@ -98,6 +108,9 @@ private:
     bool applyChanged(const Task &task);
     void refreshListNames();
     int rowOfId(qint64 id) const;
+    bool applyUpdate(qint64 id, const QString &title, const QString &notes,
+                     const QString &listName, int priority, const QDateTime &dueAt,
+                     const QDateTime *reminderAt);
     bool reportError(const QString &message);
     bool reportRepositoryError();
 

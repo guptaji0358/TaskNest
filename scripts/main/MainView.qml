@@ -10,6 +10,10 @@ Item {
     required property string databaseError
     required property string databasePath
     required property var taskModel // null when the database is unavailable
+    property var reminderScheduler: null // ReminderScheduler, optional
+
+    // Emitted when a reminder is announced (the window can flash the taskbar).
+    signal reminderArrived()
 
     readonly property bool databaseOk: databaseError.length === 0 && taskModel !== null
 
@@ -132,6 +136,43 @@ Item {
             if (Qt.application.state === Qt.ApplicationActive && root.databaseOk)
                 root.taskModel.refresh()
         }
+    }
+
+    // Reminders that have fired and not been acknowledged yet.
+    ListModel { id: reminders }
+
+    function reminderIndex(taskId) {
+        for (let i = 0; i < reminders.count; ++i) {
+            if (reminders.get(i).taskId === taskId)
+                return i
+        }
+        return -1
+    }
+
+    Connections {
+        target: root.reminderScheduler
+        function onReminderFired(taskId, title, reminderAt) {
+            if (root.reminderIndex(taskId) < 0)
+                reminders.append({ taskId: taskId, title: title, when: reminderAt })
+            root.reminderArrived()
+        }
+        function onReminderCancelled(taskId) {
+            const i = root.reminderIndex(taskId)
+            if (i >= 0)
+                reminders.remove(i)
+        }
+        function onErrorOccurred(message) { root.errorText = message }
+    }
+
+    // Marks the reminder handled; the banner goes away only if that was stored.
+    function dismissReminder(taskId, alsoComplete) {
+        if (!root.reminderScheduler.acknowledge(taskId))
+            return
+        if (alsoComplete)
+            root.taskModel.setCompleted(taskId, true)
+        const i = reminderIndex(taskId)
+        if (i >= 0)
+            reminders.remove(i)
     }
 
     Connections {
@@ -353,6 +394,47 @@ Item {
                 Accessible.role: Accessible.AlertMessage
             }
 
+            // Fired reminders (in-app notification; stays until handled).
+            Repeater {
+                model: reminders
+                delegate: Rectangle {
+                    id: reminderBanner
+                    required property var model
+                    objectName: "reminderBanner"
+                    Layout.fillWidth: true
+                    implicitHeight: reminderRow.implicitHeight + 16
+                    radius: 4
+                    color: root.accent
+
+                    RowLayout {
+                        id: reminderRow
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        spacing: 8
+                        Label {
+                            objectName: "reminderText"
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            color: root.textOnAccent
+                            font.bold: true
+                            text: "Reminder: " + reminderBanner.model.title + "  ("
+                                  + Qt.formatDateTime(reminderBanner.model.when, "ddd d MMM, HH:mm") + ")"
+                            Accessible.role: Accessible.AlertMessage
+                        }
+                        Button {
+                            objectName: "reminderComplete"
+                            text: "Complete"
+                            onClicked: root.dismissReminder(reminderBanner.model.taskId, true)
+                        }
+                        Button {
+                            objectName: "reminderDismiss"
+                            text: "Dismiss"
+                            onClicked: root.dismissReminder(reminderBanner.model.taskId, false)
+                        }
+                    }
+                }
+            }
+
             // Operation errors from the model/database.
             Rectangle {
                 objectName: "errorBanner"
@@ -407,7 +489,10 @@ Item {
                         width: ListView.view.width - 12
                         readonly property bool hasDue: model.dueAt !== undefined && model.dueAt !== null
                                                        && !isNaN(model.dueAt.getTime())
-                        readonly property bool overdue: hasDue && !model.completed
+                        // Self-contained (does not rely on hasDue being re-evaluated first).
+                        readonly property bool overdue: !model.completed
+                                                        && model.dueAt !== undefined
+                                                        && model.dueAt !== null
                                                         && model.dueAt.getTime() < Date.now()
 
                         onDoubleClicked: editor.openFor(row.model)
@@ -490,6 +575,16 @@ Item {
                                 color: row.overdue ? "#c62828" : row.palette.windowText
                                 opacity: row.overdue ? 1 : 0.65
                                 font.pixelSize: 12
+                            }
+
+                            Label {
+                                objectName: "reminderLabel"
+                                readonly property var at: row.model.reminderAt
+                                visible: at !== undefined && at !== null && !isNaN(at.getTime())
+                                         && !row.model.reminderSent
+                                text: visible ? "\u23F0 " + Qt.formatDateTime(at, "d MMM, HH:mm") : ""
+                                font.pixelSize: 12
+                                opacity: 0.65
                             }
 
                             ToolButton {
