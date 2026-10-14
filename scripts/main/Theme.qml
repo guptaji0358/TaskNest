@@ -106,6 +106,7 @@ QtObject {
         "chevron": "M6 9l6 6 6-6",
         "panel": "M4 5h16v14H4z M9 5v14",
         "undo": "M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3",
+        "settings": "M4 8h9 M17 8h3 M4 16h3 M11 16h9 M15 6v4 M9 14v4",
         "keyboard": "M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z M7 10h.01 M11 10h.01 M15 10h.01 M7 14h10",
         "flag": "M6 21V4 M6 5h11l-2.5 4L17 13H6",
         "nest": "M4 11a8 8 0 0 0 16 0 M8.5 8l2.5 2.5L15.5 5"

@@ -16,4 +16,5 @@ TaskRow 1.0 TaskRow.qml
 ReminderBanner 1.0 ReminderBanner.qml
 EmptyState 1.0 EmptyState.qml
 TaskEditor 1.0 TaskEditor.qml
+CleanupSettings 1.0 CleanupSettings.qml
 MainView 1.0 MainView.qml

@@ -12,7 +12,7 @@ namespace {
 
 const QString kColumns = QStringLiteral(
     "id, title, notes, list_name, priority, due_at, completed, reminder_at, reminder_sent, "
-    "created_at, updated_at");
+    "created_at, updated_at, completed_at");
 
 Task taskFromRow(const QSqlQuery &query)
 {
@@ -28,6 +28,7 @@ Task taskFromRow(const QSqlQuery &query)
     task.reminderSent = query.value(8).toInt() != 0;
     task.createdAt = Task::timestampFromVariant(query.value(9)).value_or(QDateTime());
     task.updatedAt = Task::timestampFromVariant(query.value(10)).value_or(QDateTime());
+    task.completedAt = Task::timestampFromVariant(query.value(11));
     return task;
 }
 
@@ -191,8 +192,8 @@ bool TaskRepository::addTask(const Task &draft, Task *created)
         QSqlQuery insert(db);
         if (!insert.prepare(QStringLiteral(
                 "INSERT INTO tasks (title, notes, list_name, priority, due_at, completed, "
-                "reminder_at, reminder_sent, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)"))) {
+                "reminder_at, reminder_sent, created_at, updated_at, completed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)"))) {
             return fail(QStringLiteral("Cannot prepare insert: %1").arg(insert.lastError().text()));
         }
         const QVariant now = nowText();
@@ -205,6 +206,7 @@ bool TaskRepository::addTask(const Task &draft, Task *created)
         insert.addBindValue(Task::timestampToVariant(task.reminderAt));
         insert.addBindValue(now);
         insert.addBindValue(now);
+        insert.addBindValue(task.completed ? now : QVariant(QMetaType::fromType<QString>()));
         if (!insert.exec())
             return fail(QStringLiteral("Cannot add task: %1").arg(insert.lastError().text()));
         newId = insert.lastInsertId().toLongLong();
@@ -257,11 +259,18 @@ bool TaskRepository::setCompleted(qint64 id, bool completed, Task *updated)
         QSqlDatabase db = m_database.connection();
         QSqlQuery update(db);
         if (!update.prepare(QStringLiteral(
-                "UPDATE tasks SET completed = ?, updated_at = ? WHERE id = ?"))) {
+                "UPDATE tasks SET "
+                // Re-completing keeps the original completion time; reopening clears it.
+                "completed_at = CASE WHEN ? = 0 THEN NULL "
+                "WHEN completed = 1 AND completed_at IS NOT NULL THEN completed_at ELSE ? END, "
+                "completed = ?, updated_at = ? WHERE id = ?"))) {
             return fail(QStringLiteral("Cannot prepare update: %1").arg(update.lastError().text()));
         }
+        const QVariant now = nowText();
         update.addBindValue(completed ? 1 : 0);
-        update.addBindValue(nowText());
+        update.addBindValue(now);
+        update.addBindValue(completed ? 1 : 0);
+        update.addBindValue(now);
         update.addBindValue(id);
         if (!update.exec())
             return fail(QStringLiteral("Cannot update task: %1").arg(update.lastError().text()));
@@ -376,8 +385,8 @@ bool TaskRepository::restoreTask(const Task &snapshot, Task *restored)
         QSqlQuery insert(db);
         if (!insert.prepare(QStringLiteral(
                 "INSERT INTO tasks (id, title, notes, list_name, priority, due_at, completed, "
-                "reminder_at, reminder_sent, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))) {
+                "reminder_at, reminder_sent, created_at, updated_at, completed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))) {
             return fail(QStringLiteral("Cannot prepare restore: %1").arg(insert.lastError().text()));
         }
         const QDateTime now = QDateTime::currentDateTimeUtc();
@@ -394,6 +403,12 @@ bool TaskRepository::restoreTask(const Task &snapshot, Task *restored)
         insert.addBindValue(task.reminderSent ? 1 : 0);
         insert.addBindValue(created.toUTC().toString(Qt::ISODateWithMs));
         insert.addBindValue(updated.toUTC().toString(Qt::ISODateWithMs));
+        // A task restored as completed keeps its original completion time.
+        std::optional<QDateTime> completedAt = task.completedAt;
+        if (task.completed && !completedAt)
+            completedAt = updated;
+        insert.addBindValue(task.completed ? Task::timestampToVariant(completedAt)
+                                           : QVariant(QMetaType::fromType<QString>()));
         if (!insert.exec()) {
             const QString reason = insert.lastError().text();
             if (reason.contains(QStringLiteral("UNIQUE"), Qt::CaseInsensitive)
@@ -420,5 +435,144 @@ bool TaskRepository::deleteTask(qint64 id)
         return fail(QStringLiteral("Cannot delete task: %1").arg(remove.lastError().text()));
     if (remove.numRowsAffected() == 0)
         return fail(QStringLiteral("Task %1 was not found.").arg(id));
+    return true;
+}
+
+// ---- completed-task cleanup ------------------------------------------------
+
+bool TaskRepository::countCompleted(const std::optional<QDateTime> &completedBefore, int *count)
+{
+    if (count)
+        *count = 0;
+    if (!ensureReady())
+        return false;
+
+    QSqlDatabase db = m_database.connection();
+    QSqlQuery select(db);
+    const bool bounded = completedBefore.has_value();
+    const QString sql = bounded
+        ? QStringLiteral("SELECT COUNT(*) FROM tasks WHERE completed = 1 "
+                         "AND completed_at IS NOT NULL AND completed_at <= ?")
+        : QStringLiteral("SELECT COUNT(*) FROM tasks WHERE completed = 1");
+    if (!select.prepare(sql))
+        return fail(QStringLiteral("Cannot prepare count: %1").arg(select.lastError().text()));
+    if (bounded)
+        select.addBindValue(Task::timestampToVariant(completedBefore));
+    if (!select.exec() || !select.next())
+        return fail(QStringLiteral("Cannot count completed tasks: %1").arg(select.lastError().text()));
+    if (count)
+        *count = select.value(0).toInt();
+    return true;
+}
+
+bool TaskRepository::purgeCompleted(const std::optional<QDateTime> &completedBefore,
+                                    QList<qint64> *deletedIds)
+{
+    if (deletedIds)
+        deletedIds->clear();
+    if (!ensureReady())
+        return false;
+
+    QSqlDatabase db = m_database.connection();
+    const bool bounded = completedBefore.has_value();
+    // Only completed rows are ever matched, and a bounded purge also needs a
+    // known completion time: a task of unknown age is kept.
+    const QString where = bounded
+        ? QStringLiteral("completed = 1 AND completed_at IS NOT NULL AND completed_at <= ?")
+        : QStringLiteral("completed = 1");
+    const QVariant cutoff = Task::timestampToVariant(completedBefore);
+
+    if (!db.transaction())
+        return fail(QStringLiteral("Cannot start transaction: %1").arg(db.lastError().text()));
+
+    QList<qint64> ids;
+    {
+        QSqlQuery select(db);
+        if (!select.prepare(QStringLiteral("SELECT id FROM tasks WHERE %1 ORDER BY id").arg(where))) {
+            const QString reason = select.lastError().text();
+            db.rollback();
+            return fail(QStringLiteral("Cannot prepare cleanup: %1").arg(reason));
+        }
+        if (bounded)
+            select.addBindValue(cutoff);
+        if (!select.exec()) {
+            const QString reason = select.lastError().text();
+            db.rollback();
+            return fail(QStringLiteral("Cannot find completed tasks: %1").arg(reason));
+        }
+        while (select.next())
+            ids << select.value(0).toLongLong();
+    }
+
+    if (!ids.isEmpty()) {
+        QSqlQuery remove(db);
+        if (!remove.prepare(QStringLiteral("DELETE FROM tasks WHERE %1").arg(where))) {
+            const QString reason = remove.lastError().text();
+            db.rollback();
+            return fail(QStringLiteral("Cannot prepare cleanup: %1").arg(reason));
+        }
+        if (bounded)
+            remove.addBindValue(cutoff);
+        if (!remove.exec()) {
+            const QString reason = remove.lastError().text();
+            db.rollback();
+            return fail(QStringLiteral("Cannot delete completed tasks: %1").arg(reason));
+        }
+        if (remove.numRowsAffected() != ids.size()) {
+            db.rollback();
+            return fail(QStringLiteral("Cleanup was cancelled because the set of completed "
+                                       "tasks changed unexpectedly. Nothing was deleted."));
+        }
+    }
+
+    if (!db.commit()) {
+        const QString reason = db.lastError().text();
+        db.rollback();
+        return fail(QStringLiteral("Cannot commit cleanup: %1").arg(reason));
+    }
+    if (deletedIds)
+        *deletedIds = ids;
+    return true;
+}
+
+bool TaskRepository::readMetadata(const QString &key, QString *value, bool *found)
+{
+    if (found)
+        *found = false;
+    if (!ensureReady())
+        return false;
+
+    QSqlDatabase db = m_database.connection();
+    QSqlQuery select(db);
+    if (!select.prepare(QStringLiteral("SELECT value FROM app_metadata WHERE key = ?")))
+        return fail(QStringLiteral("Cannot prepare settings query: %1").arg(select.lastError().text()));
+    select.addBindValue(key);
+    if (!select.exec())
+        return fail(QStringLiteral("Cannot read settings: %1").arg(select.lastError().text()));
+    if (select.next()) {
+        if (value)
+            *value = select.value(0).toString();
+        if (found)
+            *found = true;
+    }
+    return true;
+}
+
+bool TaskRepository::writeMetadata(const QString &key, const QString &value)
+{
+    if (!ensureReady())
+        return false;
+
+    QSqlDatabase db = m_database.connection();
+    QSqlQuery upsert(db);
+    if (!upsert.prepare(QStringLiteral(
+            "INSERT INTO app_metadata (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"))) {
+        return fail(QStringLiteral("Cannot prepare settings update: %1").arg(upsert.lastError().text()));
+    }
+    upsert.addBindValue(key);
+    upsert.addBindValue(value);
+    if (!upsert.exec())
+        return fail(QStringLiteral("Cannot save settings: %1").arg(upsert.lastError().text()));
     return true;
 }

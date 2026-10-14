@@ -319,10 +319,149 @@ bool TaskListModel::applyUpdate(qint64 id, const QString &title, const QString &
 
 bool TaskListModel::setCompleted(qint64 id, bool completed)
 {
+    if (completed && m_cleanup.mode == CleanupPolicy::Mode::Immediately)
+        return completeAndRemove(id);
+
     Task updated;
     if (!m_repository.setCompleted(id, completed, &updated))
         return reportRepositoryError();
-    return applyChanged(updated);
+    const bool shown = applyChanged(updated);
+
+    // Completion is an event at which a retention period may have run out for
+    // older tasks. The task just completed is never due (it was completed now).
+    if (completed && m_cleanup.mode == CleanupPolicy::Mode::AfterDays)
+        applyCleanup();
+    return shown;
+}
+
+// "Immediately" policy: the task is deleted instead of being marked completed,
+// in one statement, so the list never shows it as a completed row and a failure
+// leaves it exactly as it was (active). Not undoable by design.
+bool TaskListModel::completeAndRemove(qint64 id)
+{
+    if (!m_repository.deleteTask(id))
+        return reportRepositoryError();
+    removeRowsById({id});
+    if (m_undo && m_undo->id == id)
+        discardUndo();
+    refreshListNames();
+    emit tasksMutated(); // the scheduler drops any reminder timer / banner
+    emit completedTasksRemoved(1);
+    return true;
+}
+
+void TaskListModel::removeRowsById(const QList<qint64> &ids)
+{
+    bool removedAny = false;
+    for (qint64 id : ids) {
+        const int row = rowOfId(id);
+        if (row < 0)
+            continue;
+        beginRemoveRows(QModelIndex(), row, row);
+        m_tasks.removeAt(row);
+        endRemoveRows();
+        removedAny = true;
+    }
+    if (removedAny)
+        emit countChanged();
+}
+
+// Deletes completed tasks (all of them when `cutoff` is empty) and brings the
+// rows, undo snapshot, list names and reminders in line. -1 on failure.
+int TaskListModel::purge(const std::optional<QDateTime> &cutoff, bool automatic)
+{
+    QList<qint64> ids;
+    if (!m_repository.purgeCompleted(cutoff, &ids)) {
+        reportRepositoryError();
+        return -1;
+    }
+    if (ids.isEmpty())
+        return 0;
+
+    removeRowsById(ids);
+    if (m_undo && ids.contains(m_undo->id))
+        discardUndo();
+    refreshListNames();
+    emit tasksMutated();
+    if (automatic)
+        emit completedTasksRemoved(static_cast<int>(ids.size()));
+    return static_cast<int>(ids.size());
+}
+
+bool TaskListModel::loadCleanupPolicy()
+{
+    CleanupPolicy loaded = CleanupPolicy::never();
+    QString text;
+    bool found = false;
+    bool ok = true;
+    if (!m_repository.readMetadata(CleanupPolicy::metadataKey(), &text, &found)) {
+        reportRepositoryError();
+        ok = false; // stay on "never": an unreadable setting never deletes anything
+    } else if (found) {
+        // An invalid stored value falls back to "never" (and is left as it is).
+        loaded = CleanupPolicy::fromStored(text).value_or(CleanupPolicy::never());
+    }
+    if (loaded != m_cleanup) {
+        m_cleanup = loaded;
+        emit cleanupPolicyChanged();
+    }
+    return ok;
+}
+
+int TaskListModel::applyCleanup()
+{
+    const std::optional<QDateTime> cutoff = m_cleanup.cutoff(QDateTime::currentDateTimeUtc());
+    if (!cutoff)
+        return 0;
+    return purge(cutoff, true);
+}
+
+int TaskListModel::previewCleanup(int mode, int days)
+{
+    const std::optional<CleanupPolicy> policy = CleanupPolicy::fromParts(mode, days);
+    if (!policy) {
+        reportError(QStringLiteral("Invalid cleanup setting."));
+        return -1;
+    }
+    const std::optional<QDateTime> cutoff = policy->cutoff(QDateTime::currentDateTimeUtc());
+    if (!cutoff)
+        return 0;
+    int count = 0;
+    if (!m_repository.countCompleted(cutoff, &count)) {
+        reportRepositoryError();
+        return -1;
+    }
+    return count;
+}
+
+bool TaskListModel::setCleanupPolicy(int mode, int days)
+{
+    const std::optional<CleanupPolicy> policy = CleanupPolicy::fromParts(mode, days);
+    if (!policy)
+        return reportError(QStringLiteral("Invalid cleanup setting."));
+
+    if (!m_repository.writeMetadata(CleanupPolicy::metadataKey(), policy->toStored()))
+        return reportRepositoryError(); // not saved, not applied
+    if (*policy != m_cleanup) {
+        m_cleanup = *policy;
+        emit cleanupPolicyChanged();
+    }
+    return applyCleanup() >= 0;
+}
+
+int TaskListModel::completedCount()
+{
+    int count = 0;
+    if (!m_repository.countCompleted(std::nullopt, &count)) {
+        reportRepositoryError();
+        return -1;
+    }
+    return count;
+}
+
+int TaskListModel::clearCompleted()
+{
+    return purge(std::nullopt, false);
 }
 
 bool TaskListModel::removeTask(qint64 id)

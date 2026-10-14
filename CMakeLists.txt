@@ -20,11 +20,13 @@ qt_standard_project_setup(REQUIRES 6.5)
 
 # Data layer (database, tasks), shared by the application and the tests.
 qt_add_library(tasknestcore STATIC
+    scripts/src/cleanuppolicy.cpp
     scripts/src/database.cpp
     scripts/src/taskrepository.cpp
     scripts/src/tasklistmodel.cpp
     scripts/src/reminderscheduler.cpp
     scripts/src/singleinstance.cpp
+    scripts/include/cleanuppolicy.h
     scripts/include/database.h
     scripts/include/task.h
     scripts/include/taskrepository.h
@@ -87,6 +89,7 @@ qt_add_qml_module(appTaskNest
         scripts/main/ReminderBanner.qml
         scripts/main/EmptyState.qml
         scripts/main/TaskEditor.qml
+        scripts/main/CleanupSettings.qml
         scripts/main/MainView.qml
         scripts/main/Main.qml
 )

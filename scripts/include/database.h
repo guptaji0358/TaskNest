@@ -13,7 +13,7 @@ class Database
 {
 public:
     // Version written to PRAGMA user_version and app_metadata('schema_version').
-    static constexpr int kSchemaVersion = 2;
+    static constexpr int kSchemaVersion = 3;
 
     explicit Database(const QString &connectionName = QStringLiteral("tasknest_main"));
     ~Database();

@@ -90,6 +90,26 @@ bool createSchemaV2(QSqlDatabase &db, QString *error)
     return true;
 }
 
+// v3: completion timestamp, the basis for "delete completed tasks after N
+// days". Non-destructive: existing rows keep every value. Tasks that are
+// already completed get updated_at as their completion time; that is never
+// earlier than the real completion, so a retention rule can only delete them
+// later than it otherwise would, never sooner.
+bool createSchemaV3(QSqlDatabase &db, QString *error)
+{
+    const QStringList statements = {
+        QStringLiteral("ALTER TABLE tasks ADD COLUMN completed_at TEXT"),
+        QStringLiteral("UPDATE tasks SET completed_at = updated_at WHERE completed = 1"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_tasks_completed_at "
+                       "ON tasks (completed_at) WHERE completed = 1"),
+    };
+    for (const QString &statement : statements) {
+        if (!runStatement(db, statement, error))
+            return false;
+    }
+    return true;
+}
+
 bool writeSchemaVersion(QSqlDatabase &db, int version, QString *error)
 {
     {
@@ -136,6 +156,21 @@ bool verifySchema(QSqlDatabase &db, int expectedVersion, QString *error)
             || !tables.next()) {
             if (error)
                 *error = QStringLiteral("Schema verification failed: tasks table is missing");
+            return false;
+        }
+    }
+    if (expectedVersion >= 3) {
+        QSqlQuery columns(db);
+        bool hasCompletedAt = false;
+        if (columns.exec(QStringLiteral("PRAGMA table_info(tasks)"))) {
+            while (columns.next()) {
+                if (columns.value(1).toString() == QStringLiteral("completed_at"))
+                    hasCompletedAt = true;
+            }
+        }
+        if (!hasCompletedAt) {
+            if (error)
+                *error = QStringLiteral("Schema verification failed: tasks.completed_at is missing");
             return false;
         }
     }
@@ -300,7 +335,9 @@ bool Database::migrate()
             ok = createSchemaV1(db, &error);
         if (ok && version < 2)
             ok = createSchemaV2(db, &error);
-        // Future migrations: `if (ok && version < 3) ok = createSchemaV3(db, &error);`
+        if (ok && version < 3)
+            ok = createSchemaV3(db, &error);
+        // Future migrations: `if (ok && version < 4) ok = createSchemaV4(db, &error);`
         if (ok)
             ok = writeSchemaVersion(db, kSchemaVersion, &error);
 

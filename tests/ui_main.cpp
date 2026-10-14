@@ -48,6 +48,9 @@ public:
                 return false;
         }
         m_model.setSearchText(QString());
+        m_model.discardUndo();
+        if (!m_model.setCleanupPolicy(0, 0)) // "never automatically delete"
+            return false;
         return m_model.setView(TaskListModel::Everything, QString(), TaskListModel::All);
     }
 

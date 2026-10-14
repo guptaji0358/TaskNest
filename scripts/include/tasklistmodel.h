@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cleanuppolicy.h"
 #include "task.h"
 #include "taskrepository.h"
 
@@ -29,6 +30,11 @@ class TaskListModel : public QAbstractListModel
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoChanged)
     Q_PROPERTY(QString undoTitle READ undoTitle NOTIFY undoChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY errorOccurred)
+    // Completed-task cleanup policy: mode is a CleanupPolicy::Mode value
+    // (0 never, 1 immediately, 2 after `cleanupDays` days).
+    Q_PROPERTY(int cleanupMode READ cleanupMode NOTIFY cleanupPolicyChanged)
+    Q_PROPERTY(int cleanupDays READ cleanupDays NOTIFY cleanupPolicyChanged)
+    Q_PROPERTY(QString cleanupDescription READ cleanupDescription NOTIFY cleanupPolicyChanged)
 
 public:
     enum Roles {
@@ -72,6 +78,10 @@ public:
     bool canUndo() const { return m_undo.has_value(); }
     QString undoTitle() const { return m_undo ? m_undo->title : QString(); }
 
+    int cleanupMode() const { return static_cast<int>(m_cleanup.mode); }
+    int cleanupDays() const { return m_cleanup.days; }
+    QString cleanupDescription() const { return m_cleanup.describe(); }
+
     // Selects scope (+ list name for List) and completion filter in one load.
     Q_INVOKABLE bool setView(int scope, const QString &listName = QString(),
                              int completionFilter = All);
@@ -99,6 +109,29 @@ public:
     Q_INVOKABLE bool undoDelete();
     Q_INVOKABLE void discardUndo();
 
+    // ---- completed-task cleanup ---------------------------------------------
+    // Permanent: nothing removed here goes into the undo snapshot.
+    //
+    // Loads the saved policy. A missing, unreadable or invalid value means
+    // "never automatically delete"; the stored value is not modified.
+    Q_INVOKABLE bool loadCleanupPolicy();
+    // Removes the completed tasks that the current policy says are due (none
+    // for "never"). Call at startup and when the app is re-activated. Returns
+    // the number removed, or -1 on failure (nothing removed).
+    Q_INVOKABLE int applyCleanup();
+    // How many completed tasks saving this policy would remove right away;
+    // -1 if the mode/days are invalid or the database failed.
+    Q_INVOKABLE int previewCleanup(int mode, int days);
+    // Saves the policy, then applies it to existing completed tasks (the UI
+    // asks for confirmation first when previewCleanup() > 0). Not saved on
+    // failure. Returns false if saving or the immediate cleanup failed.
+    Q_INVOKABLE bool setCleanupPolicy(int mode, int days);
+    // Number of completed tasks in the database, or -1 on failure.
+    Q_INVOKABLE int completedCount();
+    // Permanently deletes every completed task whatever the policy. Returns the
+    // number removed, or -1 on failure (nothing removed).
+    Q_INVOKABLE int clearCompleted();
+
 signals:
     void errorOccurred(const QString &message);
     void countChanged();
@@ -110,6 +143,10 @@ signals:
     // the change is visible in the current view.
     void tasksMutated();
     void undoChanged();
+    void cleanupPolicyChanged();
+    // The policy removed completed tasks without the user acting on them
+    // individually (startup, re-activation, completion, policy change).
+    void completedTasksRemoved(int count);
 
 private:
     // `base` holds completion, search text and list name; the date range
@@ -123,6 +160,9 @@ private:
     bool applyUpdate(qint64 id, const QString &title, const QString &notes,
                      const QString &listName, int priority, const QDateTime &dueAt,
                      const QDateTime *reminderAt);
+    void removeRowsById(const QList<qint64> &ids);
+    bool completeAndRemove(qint64 id);
+    int purge(const std::optional<QDateTime> &cutoff, bool automatic);
     bool reportError(const QString &message);
     bool reportRepositoryError();
 
@@ -131,6 +171,7 @@ private:
     Scope m_scope = Everything;
     QList<Task> m_tasks;
     std::optional<Task> m_undo; // the last deleted task, until undone or discarded
+    CleanupPolicy m_cleanup;
     QStringList m_listNames;
     QString m_lastError;
 };

@@ -20,6 +20,7 @@ struct Task
     int priority = 0;
     std::optional<QDateTime> dueAt;
     bool completed = false;
+    std::optional<QDateTime> completedAt; // set while completed; basis for time-based cleanup
     std::optional<QDateTime> reminderAt;
     bool reminderSent = false;
     QDateTime createdAt;

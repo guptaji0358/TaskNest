@@ -1085,4 +1085,118 @@ TestCase {
         tryCompare(view.editorDialog, "visible", false)
         tryVerify(function () { return row(0).activeFocus }, 2000)
     }
+
+    // ---- completed-task cleanup ---------------------------------------------
+
+    function openCleanup() {
+        mouseClick(find("settingsButton"))
+        tryCompare(view.cleanupSettings.settingsDialog, "opened", true)
+    }
+    function closeCleanup() {
+        mouseClick(find("cleanupClose"))
+        tryCompare(view.cleanupSettings.settingsDialog, "visible", false)
+    }
+
+    function test_cleanupSettingsShowTheDefaultPolicy() {
+        openCleanup()
+        compare(find("cleanupCurrent").text, "Current setting: Never automatically delete")
+        compare(find("cleanupModeBox").currentIndex, 0)
+        compare(find("cleanupSave").enabled, false)      // nothing to save yet
+        compare(find("cleanupDaysBox").visible, false)
+        compare(find("clearCompletedButton").enabled, false) // no completed tasks
+        closeCleanup()
+    }
+
+    function test_cleanupSettingsReachableByKeyboardAndEscapeCloses() {
+        find("settingsButton").forceActiveFocus()
+        verify(find("settingsButton").activeFocus)
+        keyClick(Qt.Key_Space)
+        tryCompare(view.cleanupSettings.settingsDialog, "opened", true)
+        verify(find("cleanupModeBox").activeFocus) // first control is focused
+        keyClick(Qt.Key_Escape)
+        tryCompare(view.cleanupSettings.settingsDialog, "visible", false)
+    }
+
+    function test_clearCompletedAsksFirstAndKeepsActiveTasks() {
+        seed("open task")
+        seed("done 1", "", null, true)
+        seed("done 2", "", null, true)
+        openCleanup()
+        compare(find("clearCompletedButton").enabled, true)
+
+        mouseClick(find("clearCompletedButton"))
+        tryCompare(view.cleanupSettings.clearConfirmDialog, "opened", true)
+        verify(find("clearCancel").activeFocus) // the safe choice has focus
+        mouseClick(find("clearCancel"))
+        tryCompare(view.cleanupSettings.clearConfirmDialog, "visible", false)
+        compare(storedTitles().length, 3)         // cancelled: nothing deleted
+
+        mouseClick(find("clearCompletedButton"))
+        tryCompare(view.cleanupSettings.clearConfirmDialog, "opened", true)
+        mouseClick(find("clearConfirmButton"))
+        tryCompare(view.cleanupSettings.clearConfirmDialog, "visible", false)
+        compare(storedTitles(), ["open task"])
+        compare(fixture.model.canUndo, false)     // permanent
+        compare(find("clearCompletedButton").enabled, false)
+        closeCleanup()
+        compare(rowCount(), 1)
+    }
+
+    function test_savingAPolicyThatDeletesExplainsAndNeedsConfirmation() {
+        seed("open task")
+        seed("done already", "", null, true)
+        openCleanup()
+
+        find("cleanupModeBox").currentIndex = 1
+        verify(find("cleanupSave").enabled)
+        verify(find("cleanupImpact").visible)    // the consequence is shown up front
+        mouseClick(find("cleanupSave"))
+        tryCompare(view.cleanupSettings.saveConfirmDialog, "opened", true)
+        compare(fixture.model.cleanupMode, 0)    // nothing saved or deleted yet
+        compare(storedTitles().length, 2)
+
+        mouseClick(find("cleanupSaveCancel"))
+        tryCompare(view.cleanupSettings.saveConfirmDialog, "visible", false)
+        compare(fixture.model.cleanupMode, 0)
+        compare(storedTitles().length, 2)
+
+        mouseClick(find("cleanupSave"))
+        tryCompare(view.cleanupSettings.saveConfirmDialog, "opened", true)
+        mouseClick(find("cleanupSaveConfirmButton"))
+        tryCompare(view.cleanupSettings.settingsDialog, "visible", false)
+        compare(fixture.model.cleanupMode, 1)
+        compare(storedTitles(), ["open task"])
+    }
+
+    function test_immediatePolicyRemovesACompletedTaskFromTheList() {
+        seed("finish me")
+        seed("stay open")
+        verify(fixture.model.setCleanupPolicy(1, 0))
+        compare(rowCount(), 2)
+        // "finish me" has the earlier id; both are undated, so it is first.
+        mouseClick(find("taskCheck", row(0)))
+        tryCompare(fixture.model, "count", 1)
+        compare(storedTitles(), ["stay open"])
+        compare(fixture.model.canUndo, false)
+        verify(!find("emptyState").visible)
+        keyClick(Qt.Key_Z, Qt.ControlModifier)   // Ctrl+Z has nothing to restore
+        compare(storedTitles(), ["stay open"])
+    }
+
+    function test_saveRetentionPolicyWithNoImpactSavesDirectly() {
+        seed("open task")
+        openCleanup()
+        find("cleanupModeBox").currentIndex = 2
+        verify(find("cleanupDaysBox").visible)
+        find("cleanupDaysBox").currentIndex = 2   // 14 days
+        compare(find("cleanupImpact").visible, false)
+        mouseClick(find("cleanupSave"))
+        tryCompare(view.cleanupSettings.settingsDialog, "visible", false)
+        compare(fixture.model.cleanupMode, 2)
+        compare(fixture.model.cleanupDays, 14)
+        compare(storedTitles(), ["open task"])
+        openCleanup()
+        compare(find("cleanupCurrent").text, "Current setting: Delete 14 days after completion")
+        closeCleanup()
+    }
 }

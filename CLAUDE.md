@@ -84,6 +84,19 @@ Rules:
 - **Undo delete:** after a delete a notice offers Undo for 8 seconds (Ctrl+Z works while it shows and you are not typing). The model keeps **one** in-memory snapshot (the latest delete). Restoring re-inserts the same row with its **original id**, created/updated times and reminder state (`TaskRepository::restoreTask`; AUTOINCREMENT never reuses ids, and an occupied id is refused, not overwritten). A failed undo keeps the snapshot for a retry. The snapshot is discarded when the notice expires or is replaced, and is lost if the app exits first; nothing is written to disk for undo.
 - **Single instance:** `SingleInstanceGuard` holds a `QLockFile` named `<database>.lock` beside the database (so separate portable copies do not block each other). A second launch brings the running window forward (Win32) and exits with code 0 without showing a UI. `QLockFile` removes a lock whose owner process no longer exists, so a crash or kill never blocks the next start; a live owner's lock is never treated as stale. If the lock file cannot be created at all (permissions), TaskNest still starts and the database layer reports the real problem. Lock files are git-ignored (`*.lock`).
 
+## Completed-Task Cleanup (permanent deletion, user-configured)
+
+Completed tasks are kept forever unless the user explicitly chooses otherwise.
+
+- **Policy** (`CleanupPolicy`, `scripts/include/cleanuppolicy.h`), saved in `app_metadata` under `completed_cleanup_policy` as `never`, `immediately` or `days:<N>` (N = 1..3650; the UI offers 1, 7, 14 and 30, and shows a saved value outside that list). A missing, unreadable or invalid value means **Never automatically delete**; an invalid stored value is left as it is, not rewritten. The policy is read once at startup (`TaskListModel::loadCleanupPolicy`) and only changes when the user presses Save in **Settings** (sidebar, above the footer).
+- **Default is Never.** Upgrading to schema v3 deletes nothing. Selecting a policy that would delete tasks which are *already* completed first shows how many (`previewCleanup`) and needs a second, explicit confirmation ("Save and delete N"); Cancel saves nothing.
+- **Immediately:** completing a task deletes it instead (`TaskListModel::completeAndRemove`, one `DELETE`). The row never shows as completed; a database failure leaves the task active and reports the error. Not undoable.
+- **After N days:** a completed task is due once `completed_at <= now - N x 24h` (UTC, fixed-width text, compared as text). Tasks with an unknown `completed_at` are never due. Cleanup runs at startup, when a task is completed, when the window is re-activated, and when the policy is saved - never on a timer.
+- **Clear completed:** a manual action in Settings (always available, whatever the policy) behind a confirmation dialog; deletes every completed task, never an active one.
+- **Permanence:** policy and manual deletions never create an undo snapshot (`m_undo` is only set by `removeTask`). Rows are removed by id from the model; `updateTask`/`setCompleted` on a removed id fail with "not found" and never re-insert. Each deletion emits `tasksMutated`, so `ReminderScheduler::reschedule` drops the timer and any announced reminder (`reminderCancelled`).
+- **Database:** `TaskRepository::purgeCompleted` finds and deletes in one transaction with bound parameters and rolls back on any error or row-count mismatch; nothing is vacuumed (SQLite reuses freed pages; there is no automatic `VACUUM`). `tasks.completed_at` (schema v3, indexed for completed rows) is set when a task is completed, kept when it is completed again, cleared when reopened, and preserved by undo-restore. Migration backfilled it from `updated_at` for tasks that were already completed - never earlier than the real completion, so retention can only act later than it should, not sooner.
+- Failures are reported through `errorOccurred` and the dialogs; nothing is announced as removed unless the transaction committed.
+
 ## Database Location and Safety
 
 - File name: `tasknest.db`. Chosen by `Database::defaultDatabasePath()` in this order:
@@ -101,7 +114,7 @@ Rules:
 
 - Every color, size, radius, spacing step and duration comes from `scripts/main/Theme.qml` (a QML singleton). Do not hard-code them in other QML files.
 - Visual direction: graphite surfaces with a cool undertone, one electric-lime accent (actions and the active state only), violet for reminders, amber/red only for time pressure and errors. Urgency is always conveyed by an icon and words as well as color.
-- Reusable components are prefixed `TN` (`TNButton`, `TNTextField`, `TNComboBox`, `TNDialog`, ...) plus `Icon` (vector line icons from `Theme.icons`), `TaskRow`, `NavItem`, `TaskCheck`, `ReminderBanner`, `EmptyState`. Build screens from these rather than styling stock controls inline.
+- Reusable components are prefixed `TN` (`TNButton`, `TNTextField`, `TNComboBox`, `TNDialog`, ...) plus `Icon` (vector line icons from `Theme.icons`), `TaskRow`, `NavItem`, `TaskCheck`, `ReminderBanner`, `EmptyState`, `CleanupSettings`. Build screens from these rather than styling stock controls inline.
 - `scripts/main/qmldir` lists every component so the UI tests can load the QML straight from the source folder; add new components to it **and** to `QML_FILES` in `CMakeLists.txt`.
 - Do not name a property `onX` where `X` is another property of the same item: QML reads it as that property's change handler (e.g. `accentText`, not `onAccent`).
 - Animations are short (`Theme.durationFast/Base`) and are turned off when Windows animation effects are disabled.

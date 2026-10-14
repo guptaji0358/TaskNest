@@ -30,6 +30,7 @@ Item {
     // For tests and diagnostics.
     readonly property alias editorDialog: editor
     readonly property alias deleteConfirmDialog: deleteDialog
+    readonly property alias cleanupSettings: cleanup
 
     property string navKey: "all"
     property string errorText: ""   // last model error, shown in the banner
@@ -345,6 +346,11 @@ Item {
         target: root.taskModel
         function onErrorOccurred(message) { root.errorText = message }
         function onCompletionFilterChanged() { filterBox.currentIndex = root.taskModel.completionFilter }
+        // The cleanup policy removed completed tasks without being asked each time.
+        function onCompletedTasksRemoved(count) {
+            root.notify(count + (count === 1 ? " completed task was" : " completed tasks were")
+                        + " permanently removed by your cleanup setting.", "trash")
+        }
         function onListNamesChanged() {
             // The list being viewed no longer has tasks: fall back to All Tasks.
             if (root.navKey.startsWith("list:") && root.navKey !== "list:Inbox"
@@ -562,6 +568,16 @@ Item {
                             onClicked: root.selectNav(navEntry.modelData)
                         }
                     }
+                }
+
+                NavItem {
+                    objectName: "settingsButton"
+                    Layout.fillWidth: true
+                    iconName: "settings"
+                    label: "Settings"
+                    collapsed: root.railMode
+                    Accessible.description: "Completed-task cleanup"
+                    onClicked: cleanup.open()
                 }
 
                 // footer: where the data lives, and the collapse toggle
@@ -899,6 +915,13 @@ Item {
         id: editor
         objectName: "taskEditor"
         taskModel: root.taskModel
+    }
+
+    CleanupSettings {
+        id: cleanup
+        objectName: "cleanupSettings"
+        taskModel: root.taskModel
+        onNotice: (text) => root.notify(text, "check")
     }
 
     TNDialog {

@@ -97,7 +97,8 @@ ItemDelegate {
             onToggled: {
                 row.completionToggled(checked)
                 // Follow the stored value, whether or not the write succeeded.
-                checked = Qt.binding(() => row.model.completed)
+                // (the row may be gone by now, e.g. removed by the cleanup policy)
+                checked = Qt.binding(() => row.model.completed === true)
             }
         }
 

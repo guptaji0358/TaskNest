@@ -1,6 +1,7 @@
 // Tests for the database migration, TaskRepository and TaskListModel.
 // Every test works on a database file inside a temporary directory.
 
+#include "cleanuppolicy.h"
 #include "database.h"
 #include "reminderscheduler.h"
 #include "singleinstance.h"
@@ -151,22 +152,22 @@ private slots:
 
     // ---- migration -------------------------------------------------------
 
-    void migration_freshDatabaseIsV2()
+    void migration_freshDatabaseIsCurrent()
     {
         const QString file = path("fresh.db");
         {
             Database db;
             QVERIFY2(db.initialize(file), qPrintable(db.lastError()));
-            QCOMPARE(db.schemaVersion(), 2);
+            QCOMPARE(db.schemaVersion(), 3);
         }
-        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 2);
+        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 3);
         QCOMPARE(scalar(file, "SELECT value FROM app_metadata WHERE key='schema_version'").toString(),
-                 QString("2"));
+                 QString("3"));
         QCOMPARE(scalar(file, "SELECT COUNT(*) FROM sqlite_master WHERE name='tasks'").toInt(), 1);
         QCOMPARE(scalar(file, "SELECT COUNT(*) FROM tasks").toInt(), 0);
     }
 
-    void migration_v1ToV2PreservesMetadataAndOtherTables()
+    void migration_v1ToCurrentPreservesMetadataAndOtherTables()
     {
         const QString file = path("v1.db");
         QStringList seed = v1Statements();
@@ -176,11 +177,11 @@ private slots:
         {
             Database db;
             QVERIFY2(db.initialize(file), qPrintable(db.lastError()));
-            QCOMPARE(db.schemaVersion(), 2);
+            QCOMPARE(db.schemaVersion(), 3);
         }
-        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 2);
+        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 3);
         QCOMPARE(scalar(file, "SELECT value FROM app_metadata WHERE key='schema_version'").toString(),
-                 QString("2"));
+                 QString("3"));
         QCOMPARE(scalar(file, "SELECT value FROM app_metadata WHERE key='marker'").toString(),
                  QString("keep me"));
         QCOMPARE(scalar(file, "SELECT n FROM user_notes").toString(), QString("precious"));
@@ -217,7 +218,7 @@ private slots:
         Database db;
         QVERIFY(db.initialize(path("twice.db")));
         QVERIFY(db.initialize(path("twice.db")));
-        QCOMPARE(db.schemaVersion(), 2);
+        QCOMPARE(db.schemaVersion(), 3);
     }
 
     void migration_failureRollsBackCompletely()
@@ -285,13 +286,13 @@ private slots:
         {
             Database db;
             QVERIFY2(db.initialize(file), qPrintable(db.lastError()));
-            QCOMPARE(db.schemaVersion(), 2);
+            QCOMPARE(db.schemaVersion(), 3);
         }
         const QString backup = file + ".v1.bak";
         QVERIFY(QFile::exists(backup));
         QCOMPARE(fileHash(backup), original);                          // byte-identical
         QCOMPARE(scalar(backup, "PRAGMA user_version").toInt(), 1);    // still the old schema
-        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 2);
+        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 3);
 
         // a database that is already current is never backed up again
         const QByteArray backupBefore = fileHash(backup);
@@ -1647,6 +1648,508 @@ private slots:
         QVERIFY(!model.setView(TaskListModel::List, "  "));
         QVERIFY(!model.setView(99));
         QCOMPARE(errors.size(), 2);
+    }
+
+    // ---- completed-task cleanup -------------------------------------------
+
+private:
+    // Rewrites a stored completion time (through a separate connection), to
+    // simulate a task that was completed `minutesAgo` minutes ago.
+    void completedMinutesAgo(const QString &file, qint64 id, qint64 minutesAgo)
+    {
+        const QString when = QDateTime::currentDateTimeUtc()
+                                 .addSecs(-minutesAgo * 60)
+                                 .toString(Qt::ISODateWithMs);
+        QVERIFY(runSql(file, {QStringLiteral("UPDATE tasks SET completed_at = '%1' WHERE id = %2")
+                                  .arg(when)
+                                  .arg(id)}));
+    }
+
+    static constexpr qint64 kDay = 24 * 60;
+
+    // Adds a task through the model; returns its id (0 on failure).
+    static qint64 addVia(TaskListModel &model, const QString &title)
+    {
+        if (!model.addTask(title))
+            return 0;
+        for (int row = 0; row < model.rowCount(); ++row) {
+            if (model.data(model.index(row), TaskListModel::TitleRole).toString() == title)
+                return model.data(model.index(row), TaskListModel::IdRole).toLongLong();
+        }
+        return 0;
+    }
+
+    static QStringList storedTitles(const QString &file)
+    {
+        QStringList titles;
+        {
+            QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), kSeedConnection);
+            db.setDatabaseName(file);
+            if (db.open()) {
+                QSqlQuery query(db);
+                if (query.exec(QStringLiteral("SELECT title FROM tasks ORDER BY id"))) {
+                    while (query.next())
+                        titles << query.value(0).toString();
+                }
+            }
+        }
+        QSqlDatabase::removeDatabase(kSeedConnection);
+        return titles;
+    }
+
+private slots:
+    void cleanup_completionTimeIsStoredAndCleared()
+    {
+        Database db;
+        QVERIFY(db.initialize(path("cleanup_stamp.db")));
+        TaskRepository repo(db);
+        Task created;
+        QVERIFY(repo.addTask(draft("a"), &created));
+        QVERIFY(!created.completedAt.has_value());
+
+        Task done;
+        QVERIFY(repo.setCompleted(created.id, true, &done));
+        QVERIFY(done.completedAt.has_value());
+        const QDateTime first = *done.completedAt;
+
+        // Completing again does not extend the retention clock.
+        QTest::qWait(5);
+        Task again;
+        QVERIFY(repo.setCompleted(created.id, true, &again));
+        QCOMPARE(*again.completedAt, first);
+
+        Task reopened;
+        QVERIFY(repo.setCompleted(created.id, false, &reopened));
+        QVERIFY(!reopened.completedAt.has_value());
+    }
+
+    void cleanup_upgradeBackfillsCompletionTimeAndDeletesNothing()
+    {
+        const QString file = path("cleanup_v2.db");
+        QStringList seed = v1Statements();
+        seed << "CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "title TEXT NOT NULL CHECK (length(trim(title)) > 0), notes TEXT NOT NULL DEFAULT '', "
+                "list_name TEXT NOT NULL DEFAULT 'Inbox', "
+                "priority INTEGER NOT NULL DEFAULT 0 CHECK (priority BETWEEN 0 AND 2), due_at TEXT, "
+                "completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)), reminder_at TEXT, "
+                "reminder_sent INTEGER NOT NULL DEFAULT 0 CHECK (reminder_sent IN (0, 1)), "
+                "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+             << "INSERT INTO tasks (title, completed, created_at, updated_at) VALUES "
+                "('old done', 1, '2001-01-01T00:00:00.000Z', '2001-02-03T04:05:06.000Z')"
+             << "INSERT INTO tasks (title, completed, created_at, updated_at) VALUES "
+                "('open', 0, '2001-01-01T00:00:00.000Z', '2001-01-01T00:00:00.000Z')"
+             << "UPDATE app_metadata SET value = '2' WHERE key = 'schema_version'"
+             << "PRAGMA user_version = 2";
+        QVERIFY(runSql(file, seed));
+        const QByteArray original = fileHash(file);
+
+        {
+            Database db;
+            QVERIFY2(db.initialize(file), qPrintable(db.lastError()));
+            TaskRepository repo(db);
+            TaskListModel model(repo);
+            QVERIFY(model.loadCleanupPolicy());
+            QCOMPARE(model.cleanupMode(), static_cast<int>(CleanupPolicy::Mode::Never));
+            QCOMPARE(model.applyCleanup(), 0); // an upgrade never deletes anything
+        }
+        QCOMPARE(storedTitles(file), (QStringList{"old done", "open"}));
+        QCOMPARE(scalar(file, "SELECT completed_at FROM tasks WHERE title='old done'").toString(),
+                 QString("2001-02-03T04:05:06.000Z"));
+        QVERIFY(scalar(file, "SELECT completed_at FROM tasks WHERE title='open'").isNull());
+        QCOMPARE(fileHash(file + ".v2.bak"), original);
+    }
+
+    void cleanup_defaultPolicyNeverDeletesCompletedTasks()
+    {
+        const QString file = path("cleanup_default.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        QVERIFY(model.loadCleanupPolicy());
+        QCOMPARE(model.cleanupMode(), 0);
+
+        const qint64 id = addVia(model, "ancient");
+        QVERIFY(model.setCompleted(id, true));
+        completedMinutesAgo(file, id, 5000 * kDay);
+
+        QCOMPARE(model.applyCleanup(), 0);
+        QVERIFY(model.setCompleted(addVia(model, "another"), true)); // a completion event
+        QCOMPARE(storedTitles(file), (QStringList{"ancient", "another"}));
+        QCOMPARE(model.rowCount(), 2);
+    }
+
+    void cleanup_immediateDeletesOnCompletionOnly()
+    {
+        const QString file = path("cleanup_immediate.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        QVERIFY(model.loadCleanupPolicy());
+        const qint64 keep = addVia(model, "stays active");
+        const qint64 done = addVia(model, "finish me");
+        QVERIFY(keep > 0 && done > 0);
+
+        QCOMPARE(model.previewCleanup(1, 0), 0);
+        QVERIFY(model.setCleanupPolicy(1, 0));
+        QCOMPARE(model.cleanupMode(), 1);
+        QCOMPARE(model.rowCount(), 2); // saving the policy touched no active task
+
+        QSignalSpy removedRows(&model, &QAbstractItemModel::rowsRemoved);
+        QSignalSpy dataChanged(&model, &QAbstractItemModel::dataChanged);
+        QSignalSpy notified(&model, &TaskListModel::completedTasksRemoved);
+        QVERIFY2(model.setCompleted(done, true), qPrintable(model.lastError()));
+
+        QCOMPARE(removedRows.size(), 1);
+        QCOMPARE(dataChanged.size(), 0); // never shown as a completed row
+        QCOMPARE(notified.size(), 1);
+        QCOMPARE(model.rowCount(), 1);
+        QCOMPARE(storedTitles(file), QStringList{"stays active"});
+        QVERIFY(!model.canUndo());
+
+        // Reopening and editing never resurrect it.
+        QVERIFY(!model.setCompleted(done, false));
+        QVERIFY(!model.updateTask(done, "ghost", "", "Inbox", 0));
+        QCOMPARE(storedTitles(file), QStringList{"stays active"});
+    }
+
+    void cleanup_afterDaysUsesCutoffAndSparesFreshAndActiveTasks()
+    {
+        const QString file = path("cleanup_days.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+
+        const qint64 old = addVia(model, "old");
+        const qint64 justOver = addVia(model, "just over");
+        const qint64 justUnder = addVia(model, "just under");
+        const qint64 fresh = addVia(model, "fresh");
+        const qint64 unknown = addVia(model, "unknown age");
+        const qint64 active = addVia(model, "active but ancient");
+        for (qint64 id : {old, justOver, justUnder, fresh, unknown})
+            QVERIFY(model.setCompleted(id, true));
+        completedMinutesAgo(file, old, 30 * kDay);
+        completedMinutesAgo(file, justOver, 7 * kDay + 1);
+        completedMinutesAgo(file, justUnder, 7 * kDay - 1);
+        QVERIFY(runSql(file, {QStringLiteral("UPDATE tasks SET completed_at = NULL WHERE id = %1").arg(unknown),
+                              QStringLiteral("UPDATE tasks SET created_at = '2001-01-01T00:00:00.000Z' "
+                                             "WHERE id = %1").arg(active)}));
+
+        QCOMPARE(model.previewCleanup(2, 7), 2);
+        QCOMPARE(storedTitles(file).size(), 6); // previewing deletes nothing
+        QCOMPARE(model.previewCleanup(2, 0), -1);   // invalid retention
+        QCOMPARE(model.previewCleanup(2, 99999), -1);
+
+        QSignalSpy notified(&model, &TaskListModel::completedTasksRemoved);
+        QVERIFY(model.setCleanupPolicy(2, 7));
+        QCOMPARE(model.cleanupDays(), 7);
+        QCOMPARE(storedTitles(file),
+                 (QStringList{"just under", "fresh", "unknown age", "active but ancient"}));
+        QCOMPARE(model.rowCount(), 4);
+        QCOMPARE(notified.value(0).value(0).toInt(), 2);
+        QVERIFY(!model.canUndo());
+    }
+
+    void cleanup_afterDaysRunsAtCompletionAndStartup()
+    {
+        const QString file = path("cleanup_events.db");
+        qint64 stale = 0;
+        {
+            Database db;
+            QVERIFY(db.initialize(file));
+            TaskRepository repo(db);
+            TaskListModel model(repo);
+            QVERIFY(model.setCleanupPolicy(2, 1));
+            stale = addVia(model, "stale");
+            QVERIFY(model.setCompleted(stale, true));
+            completedMinutesAgo(file, stale, 3 * kDay);
+            QCOMPARE(storedTitles(file), QStringList{"stale"}); // not yet: no event since
+
+            const qint64 next = addVia(model, "next");
+            QVERIFY(model.setCompleted(next, true)); // completion event
+            QCOMPARE(storedTitles(file), QStringList{"next"});
+            completedMinutesAgo(file, next, 3 * kDay);
+        }
+        // "Application startup": a new model loads the saved policy and applies it.
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        QVERIFY(model.loadCleanupPolicy());
+        QCOMPARE(model.cleanupDays(), 1);
+        QCOMPARE(model.applyCleanup(), 1);
+        QVERIFY(model.refresh());
+        QCOMPARE(model.rowCount(), 0);
+    }
+
+    void cleanup_manualClearRemovesOnlyCompletedAndIsPermanent()
+    {
+        const QString file = path("cleanup_manual.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+
+        const qint64 a = addVia(model, "done 1");
+        const qint64 b = addVia(model, "done 2");
+        addVia(model, "open 1");
+        addVia(model, "open 2");
+        QVERIFY(model.setCompleted(a, true));
+        QVERIFY(model.setCompleted(b, true));
+        QCOMPARE(model.completedCount(), 2);
+
+        QCOMPARE(model.clearCompleted(), 2); // policy is "never"; manual always works
+        QCOMPARE(storedTitles(file), (QStringList{"open 1", "open 2"}));
+        QCOMPARE(model.rowCount(), 2);
+        QCOMPARE(model.completedCount(), 0);
+        QCOMPARE(model.clearCompleted(), 0);
+        QVERIFY(!model.canUndo());
+        QVERIFY(!model.undoDelete());
+    }
+
+    void cleanup_invalidOrMissingSettingFallsBackToNever()
+    {
+        const QString file = path("cleanup_invalid.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+
+        QVERIFY(model.loadCleanupPolicy()); // nothing stored yet
+        QCOMPARE(model.cleanupMode(), 0);
+
+        const QStringList bad = {"garbage", "", "days:0", "days:-3", "days:abc", "days:99999",
+                                 "DAYS:7", "immediate"};
+        for (const QString &value : bad) {
+            QVERIFY(runSql(file, {QStringLiteral("INSERT INTO app_metadata (key, value) VALUES "
+                                                 "('completed_cleanup_policy', '%1') "
+                                                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+                                      .arg(value)}));
+            QVERIFY(model.loadCleanupPolicy());
+            QCOMPARE(model.cleanupMode(), 0);
+            QCOMPARE(model.applyCleanup(), 0);
+            // the stored value is left alone, not "repaired"
+            QCOMPARE(scalar(file, "SELECT value FROM app_metadata WHERE key='completed_cleanup_policy'")
+                         .toString(), value);
+        }
+        QVERIFY(!model.setCleanupPolicy(7, 0)); // unknown mode refused
+        QVERIFY(!model.setCleanupPolicy(2, 0));
+        QCOMPARE(model.cleanupMode(), 0);
+    }
+
+    void cleanup_policyPersistsAcrossRestart()
+    {
+        const QString file = path("cleanup_persist.db");
+        {
+            Database db;
+            QVERIFY(db.initialize(file));
+            TaskRepository repo(db);
+            TaskListModel model(repo);
+            QVERIFY(model.setCleanupPolicy(2, 14));
+        }
+        {
+            Database db;
+            QVERIFY(db.initialize(file));
+            TaskRepository repo(db);
+            TaskListModel model(repo);
+            QCOMPARE(model.cleanupMode(), 0); // nothing is active until it is loaded
+            QVERIFY(model.loadCleanupPolicy());
+            QCOMPARE(model.cleanupMode(), 2);
+            QCOMPARE(model.cleanupDays(), 14);
+            QVERIFY(model.setCleanupPolicy(0, 0));
+        }
+        {
+            Database db;
+            QVERIFY(db.initialize(file));
+            TaskRepository repo(db);
+            TaskListModel model(repo);
+            QVERIFY(model.loadCleanupPolicy());
+            QCOMPARE(model.cleanupMode(), 0);
+        }
+        // other metadata survived
+        QCOMPARE(scalar(file, "SELECT value FROM app_metadata WHERE key='schema_version'").toString(),
+                 QString("3"));
+    }
+
+    void cleanup_removedTaskCannotBeUndoneOrResurrected()
+    {
+        const QString file = path("cleanup_undo.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+
+        // An ordinary delete is undoable...
+        const qint64 manual = addVia(model, "deleted by hand");
+        QVERIFY(model.removeTask(manual));
+        QVERIFY(model.canUndo());
+
+        // ...a policy deletion is not, and does not disturb that snapshot.
+        QVERIFY(model.setCleanupPolicy(1, 0));
+        const qint64 auto1 = addVia(model, "removed by policy");
+        QVERIFY(model.setCompleted(auto1, true));
+        QVERIFY(model.canUndo());
+        QCOMPARE(model.undoTitle(), QString("deleted by hand"));
+        QVERIFY(model.undoDelete());
+        QCOMPARE(storedTitles(file), QStringList{"deleted by hand"});
+        QVERIFY(!model.canUndo());
+        QVERIFY(!model.undoDelete()); // nothing left that could bring auto1 back
+
+        // Same for the manual "clear completed" action.
+        QVERIFY(model.setCleanupPolicy(0, 0));
+        const qint64 manual2 = addVia(model, "cleared");
+        QVERIFY(model.setCompleted(manual2, true));
+        QCOMPARE(model.clearCompleted(), 1);
+        QVERIFY(!model.canUndo());
+        QVERIFY(!model.undoDelete());
+        QCOMPARE(storedTitles(file), QStringList{"deleted by hand"});
+
+        // A restored completed task keeps its completion time (so retention
+        // still counts from when it was really completed).
+        const qint64 oldDone = addVia(model, "old done");
+        QVERIFY(model.setCompleted(oldDone, true));
+        completedMinutesAgo(file, oldDone, 40 * kDay);
+        QVERIFY(model.refresh());
+        QVERIFY(model.removeTask(oldDone));
+        QVERIFY(model.undoDelete());
+        QCOMPARE(model.previewCleanup(2, 30), 1);
+    }
+
+    void cleanup_reminderTimerAndInFlightStateAreReleased()
+    {
+        SchedulerFixture f(path("cleanup_reminder.db"), kStart);
+        QVERIFY(f.ok);
+        TaskListModel model(f.repo);
+        QObject::connect(&model, &TaskListModel::tasksMutated, &f.scheduler,
+                         &ReminderScheduler::reschedule);
+        QVERIFY(model.refresh());
+        QVERIFY(model.setCleanupPolicy(1, 0));
+
+        // A pending reminder arms the single timer...
+        const qint64 pending = f.addReminder("pending", 30);
+        QVERIFY(model.refresh());
+        f.scheduler.reschedule();
+        QVERIFY(f.scheduler.isTimerActive());
+
+        // ...and completing the task under "immediately" releases it.
+        QVERIFY(model.setCompleted(pending, true));
+        QVERIFY(!f.scheduler.isTimerActive());
+        QVERIFY(f.scheduler.nextReminderAt().isNull());
+
+        // An announced (in-flight) reminder is cancelled, so the banner goes.
+        const qint64 fired = f.addReminder("fired", 5);
+        QVERIFY(model.refresh());
+        f.now = kStart.addSecs(10 * 60);
+        f.scheduler.processDue();
+        QCOMPARE(f.scheduler.inFlightIds(), QList<qint64>{fired});
+        f.cancelled.clear();
+        QVERIFY(model.setCompleted(fired, true));
+        QCOMPARE(f.cancelled, QList<qint64>{fired});
+        QVERIFY(f.scheduler.inFlightIds().isEmpty());
+        QVERIFY(!f.scheduler.isTimerActive());
+        QCOMPARE(model.rowCount(), 0);
+        QCOMPARE(scalar(path("cleanup_reminder.db"), "SELECT COUNT(*) FROM tasks").toInt(), 0);
+
+        // A reminder cannot bring a removed task back: acknowledging it is harmless.
+        QVERIFY(f.scheduler.acknowledge(fired));
+        QCOMPARE(scalar(path("cleanup_reminder.db"), "SELECT COUNT(*) FROM tasks").toInt(), 0);
+    }
+
+    void cleanup_batchPurgeCancelsRemovedTasksReminders()
+    {
+        // Completed tasks do not hold timers (reminders are for open tasks), but
+        // a task that was announced and then completed elsewhere is in flight
+        // until the scheduler revalidates; a purge must leave nothing behind.
+        SchedulerFixture f(path("cleanup_batch.db"), kStart);
+        QVERIFY(f.ok);
+        TaskListModel model(f.repo);
+        QObject::connect(&model, &TaskListModel::tasksMutated, &f.scheduler,
+                         &ReminderScheduler::reschedule);
+        const qint64 id = f.addReminder("rem", 5);
+        QVERIFY(model.refresh());
+        f.now = kStart.addSecs(10 * 60);
+        f.scheduler.processDue();
+        QCOMPARE(f.scheduler.inFlightIds(), QList<qint64>{id});
+        QVERIFY(f.repo.setCompleted(id, true)); // completed behind the model's back
+        QCOMPARE(model.clearCompleted(), 1);
+        QVERIFY(f.scheduler.inFlightIds().isEmpty());
+        QVERIFY(!f.scheduler.isTimerActive());
+        QCOMPARE(model.rowCount(), 0); // the stale cached row is gone too
+    }
+
+    void cleanup_databaseFailuresAreReportedAndChangeNothing()
+    {
+        const QString file = path("cleanup_fail.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        const qint64 a = addVia(model, "done");
+        addVia(model, "open");
+        QVERIFY(model.setCompleted(a, true));
+
+        // A trigger makes every DELETE fail inside the real database.
+        QVERIFY(runSql(file, {QStringLiteral("CREATE TRIGGER block_delete BEFORE DELETE ON tasks "
+                                             "BEGIN SELECT RAISE(ABORT, 'delete blocked'); END")}));
+        QSignalSpy errors(&model, &TaskListModel::errorOccurred);
+        QSignalSpy notified(&model, &TaskListModel::completedTasksRemoved);
+
+        QCOMPARE(model.clearCompleted(), -1);
+        QCOMPARE(errors.size(), 1);
+        QVERIFY(errors.first().first().toString().contains("blocked"));
+        QCOMPARE(model.rowCount(), 2);
+        QCOMPARE(storedTitles(file).size(), 2);
+
+        // Saving a policy that would delete: saved, but the failure is reported
+        // and nothing is claimed as removed.
+        QVERIFY(!model.setCleanupPolicy(1, 0));
+        QCOMPARE(notified.size(), 0);
+        QCOMPARE(model.rowCount(), 2);
+
+        // "Immediately": the completion fails as a whole; the task stays active.
+        const qint64 b = addVia(model, "open 2");
+        errors.clear();
+        QVERIFY(!model.setCompleted(b, true));
+        QVERIFY(errors.size() >= 1);
+        QCOMPARE(scalar(file, QStringLiteral("SELECT completed FROM tasks WHERE id=%1").arg(b)).toInt(), 0);
+        QCOMPARE(notified.size(), 0);
+        QCOMPARE(model.rowCount(), 3);
+
+        // A closed database is reported, not ignored.
+        QVERIFY(runSql(file, {QStringLiteral("DROP TRIGGER block_delete")}));
+        db.shutdown();
+        errors.clear();
+        QCOMPARE(model.applyCleanup(), -1);
+        QCOMPARE(model.clearCompleted(), -1);
+        QCOMPARE(model.completedCount(), -1);
+        QVERIFY(!model.setCleanupPolicy(0, 0));
+        QVERIFY(errors.size() >= 4);
+        QCOMPARE(model.cleanupMode(), 1); // unchanged: the save did not happen
+    }
+
+    void cleanup_searchAndViewsNoLongerShowRemovedTasks()
+    {
+        const QString file = path("cleanup_views.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        const qint64 a = addVia(model, "needle done");
+        addVia(model, "needle open");
+        QVERIFY(model.setCompleted(a, true));
+
+        model.setSearchText("needle");
+        QCOMPARE(model.rowCount(), 2);
+        QVERIFY(model.setCleanupPolicy(1, 0)); // existing completed task removed on save
+        QCOMPARE(model.rowCount(), 1);
+        QVERIFY(model.setView(TaskListModel::Everything, QString(), TaskListModel::Completed));
+        QCOMPARE(model.rowCount(), 0);
+        QVERIFY(model.refresh());
+        QCOMPARE(model.rowCount(), 0);
+        QVERIFY(model.setView(TaskListModel::Everything, QString(), TaskListModel::All));
+        QCOMPARE(model.rowCount(), 1);
     }
 };
 

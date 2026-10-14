@@ -43,6 +43,12 @@ int main(int argc, char *argv[])
     ReminderScheduler reminders(repository); // destroyed before the model/repository
 
     QString startupError = databaseReady ? QString() : database.lastError();
+    // The cleanup policy is read before the first load, so completed tasks the
+    // user asked to be removed are never shown. The default is "never delete".
+    if (databaseReady) {
+        taskModel.loadCleanupPolicy();
+        taskModel.applyCleanup();
+    }
     if (databaseReady && !taskModel.refresh())
         startupError = taskModel.lastError();
     if (!startupError.isEmpty())
@@ -54,9 +60,12 @@ int main(int argc, char *argv[])
         QObject::connect(&taskModel, &TaskListModel::tasksMutated,
                          &reminders, &ReminderScheduler::reschedule);
         QObject::connect(&app, &QGuiApplication::applicationStateChanged, &reminders,
-                         [&reminders](Qt::ApplicationState state) {
-                             if (state == Qt::ApplicationActive)
+                         [&reminders, &taskModel](Qt::ApplicationState state) {
+                             if (state == Qt::ApplicationActive) {
+                                 // A retention period may have run out while away.
+                                 taskModel.applyCleanup();
                                  reminders.reschedule();
+                             }
                          });
         reminders.watchSystemResume();
         reminders.reschedule(); // announces overdue reminders, arms the timer
