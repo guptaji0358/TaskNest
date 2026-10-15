@@ -8,6 +8,7 @@
 #include "task.h"
 #include "tasklistmodel.h"
 #include "taskrepository.h"
+#include "widgetcontroller.h"
 
 #include <QAbstractEventDispatcher>
 #include <QAbstractItemModelTester>
@@ -2150,6 +2151,398 @@ private slots:
         QCOMPARE(model.rowCount(), 0);
         QVERIFY(model.setView(TaskListModel::Everything, QString(), TaskListModel::All));
         QCOMPARE(model.rowCount(), 1);
+    }
+
+    // ---- date/time values: UTC storage and reminder scheduling ---------------
+
+    void datetime_localTimeIsStoredAsUtcWithSeconds()
+    {
+        const QString file = path("dt_utc.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+
+        const QDateTime due(QDate(2031, 7, 1), QTime(14, 30, 15), Qt::LocalTime);
+        const QDateTime reminder(QDate(2031, 7, 1), QTime(0, 0, 0), Qt::LocalTime); // midnight
+        QVERIFY(model.addTask("dt", "", "", 0, due, reminder));
+
+        QCOMPARE(scalar(file, "SELECT due_at FROM tasks").toString(),
+                 due.toUTC().toString(Qt::ISODateWithMs));
+        QCOMPARE(scalar(file, "SELECT reminder_at FROM tasks").toString(),
+                 reminder.toUTC().toString(Qt::ISODateWithMs));
+        // read back as the same instants, in local time, seconds kept
+        const QModelIndex row = model.index(0);
+        QCOMPARE(model.data(row, TaskListModel::DueAtRole).toDateTime(), due);
+        QCOMPARE(model.data(row, TaskListModel::DueAtRole).toDateTime().time().second(), 15);
+        QCOMPARE(model.data(row, TaskListModel::ReminderAtRole).toDateTime(), reminder);
+
+        // a leap day survives the round trip
+        const QDateTime leap(QDate(2032, 2, 29), QTime(12, 0), Qt::LocalTime);
+        const qint64 id = addVia(model, "dt");
+        QVERIFY(model.updateTaskWithReminder(id, "dt", "", "Inbox", 0, leap, QDateTime()));
+        QCOMPARE(model.data(model.index(0), TaskListModel::DueAtRole).toDateTime(), leap);
+        QCOMPARE(model.data(model.index(0), TaskListModel::DueAtRole).toDateTime().date(),
+                 QDate(2032, 2, 29));
+    }
+
+    void datetime_editingTheReminderRearmsTheScheduler()
+    {
+        SchedulerFixture f(path("dt_resched.db"), kStart);
+        QVERIFY(f.ok);
+        TaskListModel model(f.repo);
+        QObject::connect(&model, &TaskListModel::tasksMutated, &f.scheduler,
+                         &ReminderScheduler::reschedule);
+
+        QVERIFY(model.addTask("r", "", "", 0, QDateTime(), kStart.addSecs(3600)));
+        const qint64 id = model.data(model.index(0), TaskListModel::IdRole).toLongLong();
+        QCOMPARE(f.scheduler.nextReminderAt(), kStart.addSecs(3600));
+        QCOMPARE(f.scheduler.timerInterval(), 3600 * 1000);
+
+        // moved earlier, to a time with seconds: the single timer is re-armed
+        const QDateTime sooner = kStart.addSecs(90);
+        QVERIFY(model.updateTaskWithReminder(id, "r", "", "Inbox", 0, QDateTime(), sooner));
+        QCOMPARE(f.scheduler.nextReminderAt(), sooner);
+        QCOMPARE(f.scheduler.timerInterval(), 90 * 1000);
+        QVERIFY(f.scheduler.isTimerActive());
+
+        // it fires once, is acknowledged, and a new time re-arms it
+        f.now = kStart.addSecs(120);
+        f.scheduler.processDue();
+        QCOMPARE(f.fired, QList<qint64>{id});
+        QVERIFY(f.scheduler.acknowledge(id));
+        QVERIFY(!f.scheduler.isTimerActive());
+
+        const QDateTime later = kStart.addSecs(2 * 3600);
+        QVERIFY(model.updateTaskWithReminder(id, "r", "", "Inbox", 0, QDateTime(), later));
+        QCOMPARE(f.scheduler.nextReminderAt(), later);
+        QCOMPARE(f.fired.size(), 1);
+
+        // clearing the reminder leaves nothing armed
+        QVERIFY(model.updateTaskWithReminder(id, "r", "", "Inbox", 0, QDateTime(), QDateTime()));
+        QVERIFY(!f.scheduler.isTimerActive());
+    }
+
+    // ---- floating widget ---------------------------------------------------------
+
+    void widget_defaultsAreSensibleAndNothingIsStoredYet()
+    {
+        const QString file = path("widget_defaults.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        WidgetController widget(model, repo);
+        QVERIFY(widget.load());
+
+        QVERIFY(!widget.widgetVisible());      // hidden until the user shows it
+        QVERIFY(!widget.hasPosition());
+        QCOMPARE(widget.width(), WidgetController::kDefaultWidth);
+        QCOMPARE(widget.height(), WidgetController::kDefaultHeight);
+        QVERIFY(widget.showToday() && widget.showUpcoming() && widget.showQuickAdd()
+                && widget.showReminders() && widget.showDetails());
+        QVERIFY(widget.alwaysOnTop());
+        QVERIFY(!widget.compact());
+        QVERIFY(widget.opacity() >= WidgetController::kMinOpacity && widget.opacity() <= 1.0);
+        QVERIFY(scalar(file, "SELECT value FROM app_metadata WHERE key='widget_settings'").isNull());
+    }
+
+    void widget_preferencesPersistAcrossRestart()
+    {
+        const QString file = path("widget_persist.db");
+        {
+            Database db;
+            QVERIFY(db.initialize(file));
+            TaskRepository repo(db);
+            TaskListModel model(repo);
+            WidgetController widget(model, repo);
+            QVERIFY(widget.load());
+            widget.setWidgetVisible(true);
+            widget.setShowOnLaunch(true);
+            widget.setX(-120);
+            widget.setY(340);
+            widget.setWidth(401);
+            widget.setHeight(333);
+            widget.setCompact(true);
+            widget.setSurface(2);
+            widget.setOpacity(0.7);
+            widget.setAlwaysOnTop(false);
+            widget.setShowUpcoming(false);
+            widget.setShowQuickAdd(false);
+            widget.setShowDetails(false);
+            // written shortly after the last change, without an explicit flush
+            QTRY_VERIFY(!scalar(file, "SELECT value FROM app_metadata WHERE key='widget_settings'").isNull());
+            QTest::qWait(700);
+        }
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        WidgetController widget(model, repo);
+        QVERIFY(widget.load());
+        QVERIFY(widget.showOnLaunch());
+        QVERIFY(widget.widgetVisible()); // shown because "show on launch" is on
+        QVERIFY(widget.hasPosition());
+        QCOMPARE(widget.x(), -120);
+        QCOMPARE(widget.y(), 340);
+        QCOMPARE(widget.width(), 401);
+        QCOMPARE(widget.height(), 333);
+        QVERIFY(widget.compact());
+        QCOMPARE(widget.surface(), 2);
+        QCOMPARE(widget.opacity(), 0.7);
+        QVERIFY(!widget.alwaysOnTop());
+        QVERIFY(widget.showToday());
+        QVERIFY(!widget.showUpcoming());
+        QVERIFY(!widget.showQuickAdd());
+        QVERIFY(widget.showReminders());
+        QVERIFY(!widget.showDetails());
+    }
+
+    void widget_pendingChangesAreWrittenWhenTheControllerIsDestroyed()
+    {
+        const QString file = path("widget_destroy.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        {
+            WidgetController widget(model, repo);
+            widget.setWidth(512); // save timer pending
+        }
+        QVERIFY(scalar(file, "SELECT value FROM app_metadata WHERE key='widget_settings'")
+                    .toString().contains("512"));
+        // the model keeps working with the controller gone
+        QVERIFY(model.addTask("still works"));
+    }
+
+    void widget_invalidStoredPreferencesFallBackToSafeValues()
+    {
+        const QString file = path("widget_invalid.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+
+        auto store = [&](const QString &json) {
+            QVERIFY(runSql(file, {QStringLiteral("INSERT INTO app_metadata (key, value) VALUES "
+                                                 "('widget_settings', '%1') ON CONFLICT(key) "
+                                                 "DO UPDATE SET value = excluded.value").arg(json)}));
+        };
+
+        store("not json at all");
+        {
+            WidgetController widget(model, repo);
+            QVERIFY(widget.load());
+            QVERIFY(!widget.widgetVisible());
+            QCOMPARE(widget.width(), WidgetController::kDefaultWidth);
+        }
+        store("[1,2,3]");
+        {
+            WidgetController widget(model, repo);
+            QVERIFY(widget.load());
+            QVERIFY(widget.showToday());
+        }
+        // out-of-range values are clamped, wrong types ignored
+        store("{\"width\":5,\"height\":99999,\"opacity\":0.05,\"surface\":9,"
+              "\"showToday\":\"yes\",\"x\":\"left\",\"visible\":true}");
+        {
+            WidgetController widget(model, repo);
+            QVERIFY(widget.load());
+            QCOMPARE(widget.width(), WidgetController::kMinWidth);
+            QVERIFY(widget.height() <= 4000);
+            QCOMPARE(widget.opacity(), WidgetController::kMinOpacity);
+            QCOMPARE(widget.surface(), WidgetController::kSurfaceCount - 1);
+            QVERIFY(widget.showToday());     // not a bool: default kept
+            QVERIFY(!widget.hasPosition());  // x/y need to be numbers
+            // A saved "visible":true from an earlier session is not restored.
+            QVERIFY(!widget.showOnLaunch());
+            QVERIFY(!widget.widgetVisible());
+        }
+        store("{\"visible\":false,\"showOnLaunch\":true}");
+        {
+            WidgetController widget(model, repo);
+            QVERIFY(widget.load());
+            QVERIFY(widget.widgetVisible());
+        }
+        store("{\"showOnLaunch\":\"yes\"}"); // wrong type: stays off
+        {
+            WidgetController widget(model, repo);
+            QVERIFY(widget.load());
+            QVERIFY(!widget.widgetVisible());
+        }
+        // setters clamp too
+        WidgetController widget(model, repo);
+        widget.setOpacity(5.0);
+        QCOMPARE(widget.opacity(), 1.0);
+        widget.setOpacity(-1.0);
+        QCOMPARE(widget.opacity(), WidgetController::kMinOpacity);
+        widget.setWidth(1);
+        QCOMPARE(widget.width(), WidgetController::kMinWidth);
+    }
+
+    void widget_positionIsRecoveredWhenOffScreen()
+    {
+        const QRect primary(0, 0, 1920, 1040);
+        const QRect second(1920, 0, 1600, 900);
+        QPoint p;
+
+        // on screen: unchanged
+        QVERIFY(WidgetController::recoverPosition(QRect(100, 80, 320, 460), {primary}, &p));
+        QCOMPARE(p, QPoint(100, 80));
+        // on a second screen that still exists: unchanged
+        QVERIFY(WidgetController::recoverPosition(QRect(2000, 50, 320, 460), {primary, second}, &p));
+        QCOMPARE(p, QPoint(2000, 50));
+        // the second screen was unplugged: pulled onto the remaining one
+        QVERIFY(WidgetController::recoverPosition(QRect(2000, 50, 320, 460), {primary}, &p));
+        QCOMPARE(p, QPoint(1920 - 320, 50));
+        // far away / negative coordinates
+        QVERIFY(WidgetController::recoverPosition(QRect(-5000, -3000, 320, 460), {primary}, &p));
+        QCOMPARE(p, QPoint(0, 0));
+        QVERIFY(WidgetController::recoverPosition(QRect(40000, 40000, 320, 460), {primary}, &p));
+        QCOMPARE(p, QPoint(1920 - 320, 1040 - 460));
+        // mostly off the left edge but the title strip is still reachable: kept
+        QVERIFY(WidgetController::recoverPosition(QRect(-230, 100, 320, 460), {primary}, &p));
+        QCOMPARE(p, QPoint(-230, 100));
+        // only a sliver visible: moved back
+        QVERIFY(WidgetController::recoverPosition(QRect(-310, 100, 320, 460), {primary}, &p));
+        QCOMPARE(p, QPoint(0, 100));
+        // title strip above the top of the screen cannot be grabbed: moved down
+        QVERIFY(WidgetController::recoverPosition(QRect(100, -200, 320, 460), {primary}, &p));
+        QCOMPARE(p, QPoint(100, 0));
+        // a window taller than the screen is aligned to the top-left
+        QVERIFY(WidgetController::recoverPosition(QRect(-9000, 500, 320, 3000), {primary}, &p));
+        QCOMPARE(p, QPoint(0, 0));
+        // no screens: nothing can be said
+        QVERIFY(!WidgetController::recoverPosition(QRect(0, 0, 320, 460), {}, &p));
+    }
+
+    void widget_viewsFollowTheMainModelWithoutPolling()
+    {
+        const QString file = path("widget_views.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        WidgetController widget(model, repo);
+        widget.refreshViews();
+        auto *today = qobject_cast<TaskListModel *>(widget.todayModel());
+        auto *upcoming = qobject_cast<TaskListModel *>(widget.upcomingModel());
+        QVERIFY(today && upcoming);
+        QCOMPARE(today->rowCount(), 0);
+
+        const QDate day = QDate::currentDate();
+        const QDateTime todayDue(day, QTime(18, 0), Qt::LocalTime);
+        const QDateTime tomorrowDue(day.addDays(2), QTime(18, 0), Qt::LocalTime);
+
+        // created in the main model -> shown in the widget views at once
+        QVERIFY(model.addTask("due today", "", "", 2, todayDue));
+        QVERIFY(model.addTask("due later", "", "", 0, tomorrowDue));
+        QVERIFY(model.addTask("no date"));
+        QCOMPARE(today->rowCount(), 1);
+        QCOMPARE(upcoming->rowCount(), 1);
+        QCOMPARE(today->data(today->index(0), TaskListModel::TitleRole).toString(), QString("due today"));
+        QCOMPARE(today->data(today->index(0), TaskListModel::PriorityRole).toInt(), 2);
+
+        // completed through the main model (what the widget's checkbox calls)
+        const qint64 id = today->data(today->index(0), TaskListModel::IdRole).toLongLong();
+        QVERIFY(model.setCompleted(id, true));
+        QCOMPARE(today->rowCount(), 0);
+        QVERIFY(model.setCompleted(id, false));
+        QCOMPARE(today->rowCount(), 1);
+
+        // re-timed in the main model: moves between the two views
+        QVERIFY(model.updateTask(id, "due today", "", "Inbox", 2, tomorrowDue));
+        QCOMPARE(today->rowCount(), 0);
+        QCOMPARE(upcoming->rowCount(), 2);
+
+        // deleted in the main model, and brought back by undo
+        QVERIFY(model.removeTask(id));
+        QCOMPARE(upcoming->rowCount(), 1);
+        QVERIFY(model.undoDelete());
+        QCOMPARE(upcoming->rowCount(), 2);
+
+        // the widget views never write: rows can only change through the main model
+        QCOMPARE(scalar(file, "SELECT COUNT(*) FROM tasks").toInt(), 3);
+    }
+
+    void widget_taskCompletedInTheWidgetIsConsistentEverywhere()
+    {
+        const QString file = path("widget_complete.db");
+        Database db;
+        QVERIFY(db.initialize(file));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        WidgetController widget(model, repo);
+        widget.refreshViews();
+        auto *today = qobject_cast<TaskListModel *>(widget.todayModel());
+
+        const QDateTime due(QDate::currentDate(), QTime(23, 59), Qt::LocalTime);
+        QVERIFY(model.addTask("widget task", "", "", 0, due));
+        const qint64 id = model.data(model.index(0), TaskListModel::IdRole).toLongLong();
+        QCOMPARE(today->rowCount(), 1);
+
+        QSignalSpy mutated(&model, &TaskListModel::tasksMutated);
+        QVERIFY(model.setCompleted(id, true));     // widget checkbox -> main model
+        QCOMPARE(mutated.size(), 1);
+        QCOMPARE(today->rowCount(), 0);
+        QVERIFY(model.data(model.index(0), TaskListModel::CompletedRole).toBool());
+        QCOMPARE(scalar(file, "SELECT completed FROM tasks").toInt(), 1);
+
+        // creation through the widget path: a quick add with a due date of today
+        QVERIFY(model.addTask("added in widget", "", "", 0, due));
+        QCOMPARE(today->rowCount(), 1);
+        QCOMPARE(model.rowCount(), 2);
+    }
+
+    void widget_hidingAndClosingKeepTasksAndReminders()
+    {
+        SchedulerFixture f(path("widget_life.db"), kStart);
+        QVERIFY(f.ok);
+        TaskListModel model(f.repo);
+        QObject::connect(&model, &TaskListModel::tasksMutated, &f.scheduler,
+                         &ReminderScheduler::reschedule);
+        QVERIFY(model.addTask("keep me", "", "", 0, QDateTime(), kStart.addSecs(3600)));
+        QVERIFY(f.scheduler.isTimerActive());
+        const QDateTime armedFor = f.scheduler.nextReminderAt();
+
+        for (int i = 0; i < 5; ++i) { // shown and hidden repeatedly, and finally destroyed
+            WidgetController widget(model, f.repo);
+            QVERIFY(widget.load());
+            widget.refreshViews();
+            widget.setWidgetVisible(true);
+            widget.setWidgetVisible(false);
+            widget.flush();
+        }
+        QVERIFY(f.scheduler.isTimerActive());
+        QCOMPARE(f.scheduler.nextReminderAt(), armedFor);
+        QCOMPARE(model.rowCount(), 1);
+
+        // the controller reacts to changes only while it exists
+        QVERIFY(model.addTask("after"));
+        QCOMPARE(model.rowCount(), 2);
+    }
+
+    void widget_taskDataSupportsOpeningATaskInTheMainWindow()
+    {
+        Database db;
+        QVERIFY(db.initialize(path("widget_open.db")));
+        TaskRepository repo(db);
+        TaskListModel model(repo);
+        const QDateTime due(QDate(2031, 5, 6), QTime(7, 45, 30), Qt::LocalTime);
+        QVERIFY(model.addTask("open me", "notes here", "Work", 2, due));
+        const qint64 id = model.data(model.index(0), TaskListModel::IdRole).toLongLong();
+
+        const QVariantMap data = model.taskData(id);
+        QCOMPARE(data.value("title").toString(), QString("open me"));
+        QCOMPARE(data.value("notes").toString(), QString("notes here"));
+        QCOMPARE(data.value("listName").toString(), QString("Work"));
+        QCOMPARE(data.value("priority").toInt(), 2);
+        QCOMPARE(data.value("dueAt").toDateTime(), due);
+        QVERIFY(!data.value("reminderAt").isValid() || data.value("reminderAt").isNull());
+
+        QSignalSpy errors(&model, &TaskListModel::errorOccurred);
+        QVERIFY(model.taskData(987654).isEmpty());
+        QCOMPARE(errors.size(), 0); // a vanished task is not an error
     }
 };
 

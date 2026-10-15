@@ -5,6 +5,7 @@
 #include "reminderscheduler.h"
 #include "tasklistmodel.h"
 #include "taskrepository.h"
+#include "widgetcontroller.h"
 
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -19,6 +20,7 @@ class UiFixture : public QObject
     Q_OBJECT
     Q_PROPERTY(QObject *model READ model CONSTANT)
     Q_PROPERTY(QObject *scheduler READ scheduler CONSTANT)
+    Q_PROPERTY(QObject *widget READ widget CONSTANT)
 
 public:
     UiFixture()
@@ -26,15 +28,18 @@ public:
         , m_repository(m_database)
         , m_model(m_repository)
         , m_scheduler(m_repository)
+        , m_widget(m_model, m_repository)
     {
         QObject::connect(&m_model, &TaskListModel::tasksMutated, &m_scheduler,
                          &ReminderScheduler::reschedule);
         m_database.initialize(m_dir.filePath(QStringLiteral("ui.db")));
         m_model.refresh();
+        m_widget.refreshViews();
     }
 
     QObject *model() { return &m_model; }
     QObject *scheduler() { return &m_scheduler; }
+    QObject *widget() { return &m_widget; }
 
     // Deletes every stored task and returns the model to the default view.
     Q_INVOKABLE bool reset()
@@ -49,9 +54,14 @@ public:
         }
         m_model.setSearchText(QString());
         m_model.discardUndo();
+        m_widget.setWidgetVisible(false);
+        m_widget.resetPreferences();
+        m_widget.setCompact(false);
         if (!m_model.setCleanupPolicy(0, 0)) // "never automatically delete"
             return false;
-        return m_model.setView(TaskListModel::Everything, QString(), TaskListModel::All);
+        const bool ok = m_model.setView(TaskListModel::Everything, QString(), TaskListModel::All);
+        m_widget.refreshViews();
+        return ok;
     }
 
     // What is actually stored, read through the repository (not the model).
@@ -89,6 +99,7 @@ private:
     TaskRepository m_repository;
     TaskListModel m_model;
     ReminderScheduler m_scheduler;
+    WidgetController m_widget;
 };
 
 class Setup : public QObject

@@ -32,7 +32,7 @@ TNDialog {
             dateField.text = Qt.formatDate(due, "yyyy-MM-dd")
             // Date-only tasks are stored as 23:59, so that time is left blank.
             const isDateOnly = due.getHours() === 23 && due.getMinutes() === 59
-            timeField.text = isDateOnly ? "" : Qt.formatTime(due, "HH:mm")
+            timeField.text = isDateOnly ? "" : Theme.timeText(due)
         } else {
             dateField.text = ""
             timeField.text = ""
@@ -40,7 +40,7 @@ TNDialog {
         const reminder = row.reminderAt
         if (reminder && !isNaN(reminder.getTime())) {
             reminderDateField.text = Qt.formatDate(reminder, "yyyy-MM-dd")
-            reminderTimeField.text = Qt.formatTime(reminder, "HH:mm")
+            reminderTimeField.text = Theme.timeText(reminder)
         } else {
             reminderDateField.text = ""
             reminderTimeField.text = ""
@@ -85,6 +85,7 @@ TNDialog {
 
     contentItem: ScrollView {
         id: scroller
+        objectName: "editorScroll"
         contentWidth: availableWidth
         clip: true
         implicitHeight: form.implicitHeight
@@ -199,20 +200,24 @@ TNDialog {
                     Layout.fillHeight: false
                     spacing: Theme.s3
 
-                    TNTextField {
+                    TNDateField {
                         id: dateField
                         objectName: "editorDate"
+                        label: "Due"
                         Layout.fillWidth: true
                         Layout.preferredWidth: 3
                         placeholderText: "YYYY-MM-DD"
                         onAccepted: editor.save()
                     }
-                    TNTextField {
+                    TNTimeField {
                         id: timeField
                         objectName: "editorTime"
+                        label: "Due"
+                        defaultHour: 23
+                        defaultMinute: 59
                         Layout.fillWidth: true
                         Layout.preferredWidth: 2
-                        placeholderText: "HH:MM (optional)"
+                        placeholderText: "HH:mm (optional)"
                         onAccepted: editor.save()
                     }
                 }
@@ -233,20 +238,24 @@ TNDialog {
                     Layout.fillHeight: false
                     spacing: Theme.s3
 
-                    TNTextField {
+                    TNDateField {
                         id: reminderDateField
                         objectName: "editorReminderDate"
+                        label: "Reminder"
                         Layout.fillWidth: true
                         Layout.preferredWidth: 3
                         placeholderText: "YYYY-MM-DD (optional)"
                         onAccepted: editor.save()
                     }
-                    TNTextField {
+                    TNTimeField {
                         id: reminderTimeField
                         objectName: "editorReminderTime"
+                        label: "Reminder"
+                        defaultHour: 9
+                        defaultMinute: 0
                         Layout.fillWidth: true
                         Layout.preferredWidth: 2
-                        placeholderText: "HH:MM (default 09:00)"
+                        placeholderText: "HH:mm (default 09:00)"
                         onAccepted: editor.save()
                     }
                 }

@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import "DateTimeInput.js" as DateTimeInput
 
 // TaskNest design system: "quietly futuristic productivity".
 // Graphite surfaces with a cool undertone, one electric-lime accent used only
@@ -106,6 +107,7 @@ QtObject {
         "chevron": "M6 9l6 6 6-6",
         "panel": "M4 5h16v14H4z M9 5v14",
         "undo": "M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3",
+        "widget": "M5 5h6v6H5z M13 5h6v6h-6z M5 13h6v6H5z M13 13h6v6h-6z",
         "settings": "M4 8h9 M17 8h3 M4 16h3 M11 16h9 M15 6v4 M9 14v4",
         "keyboard": "M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z M7 10h.01 M11 10h.01 M15 10h.01 M7 14h10",
         "flag": "M6 21V4 M6 5h11l-2.5 4L17 13H6",
@@ -163,33 +165,17 @@ QtObject {
         return "today"
     }
 
-    // Parses a local date + optional time typed as YYYY-MM-DD and HH:MM.
-    // Both blank means "none". Returns { error: string } or { value: Date }
-    // (an invalid Date means "none"). `label` names the field in messages; a
-    // missing time becomes hours:minutes.
+    // Parses a local date + optional time (see DateTimeInput.js for the
+    // accepted formats). Both blank means "none". Returns { error: string } or
+    // { value: Date } (an invalid Date means "none"). `label` names the field
+    // in messages; a missing time becomes hours:minutes.
     function parseDateTime(dateText, timeText, label, hours, minutes) {
-        dateText = dateText.trim()
-        timeText = timeText.trim()
-        if (dateText === "" && timeText === "")
-            return { value: new Date(NaN) }
-        if (dateText === "")
-            return { error: "Enter a " + label.toLowerCase() + " date, or clear the time." }
+        return DateTimeInput.parseDateTime(dateText, timeText, label, hours, minutes)
+    }
 
-        const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText)
-        if (!d)
-            return { error: label + " date must look like 2026-12-31." }
-        if (timeText !== "") {
-            const t = /^(\d{1,2}):(\d{2})$/.exec(timeText)
-            if (!t || Number(t[1]) > 23 || Number(t[2]) > 59)
-                return { error: label + " time must look like 14:30 (24-hour)." }
-            hours = Number(t[1])
-            minutes = Number(t[2])
-        }
-        const date = new Date(Number(d[1]), Number(d[2]) - 1, Number(d[3]), hours, minutes, 0, 0)
-        if (date.getFullYear() !== Number(d[1]) || date.getMonth() !== Number(d[2]) - 1
-                || date.getDate() !== Number(d[3]))
-            return { error: "That " + label.toLowerCase() + " date does not exist." }
-        return { value: date }
+    // "HH:mm", or "HH:mm:ss" when the seconds are not zero.
+    function timeText(date) {
+        return DateTimeInput.formatTimeObject(date)
     }
 
     function reminderText(date) {

@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QList>
 #include <QStringList>
+#include <QVariantMap>
 
 // List model over TaskRepository. Rows are ordered by task id. Every mutating
 // call changes the database first and the in-memory rows only on success, so
@@ -85,6 +86,11 @@ public:
     // Selects scope (+ list name for List) and completion filter in one load.
     Q_INVOKABLE bool setView(int scope, const QString &listName = QString(),
                              int completionFilter = All);
+
+    // One stored task as a map (id, title, notes, listName, priority, dueAt,
+    // completed, reminderAt, reminderSent), read from the database; empty if it
+    // does not exist (or on failure, which is reported).
+    Q_INVOKABLE QVariantMap taskData(qint64 id);
 
     // Reloads from the database. On failure the current rows are kept.
     Q_INVOKABLE bool refresh();

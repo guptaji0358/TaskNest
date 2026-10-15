@@ -24,13 +24,17 @@ qt_add_library(tasknestcore STATIC
     scripts/src/database.cpp
     scripts/src/taskrepository.cpp
     scripts/src/tasklistmodel.cpp
+    scripts/src/widgetcontroller.cpp
     scripts/src/reminderscheduler.cpp
     scripts/src/singleinstance.cpp
+    scripts/src/shortcutmanager.cpp
+    scripts/include/shortcutmanager.h
     scripts/include/cleanuppolicy.h
     scripts/include/database.h
     scripts/include/task.h
     scripts/include/taskrepository.h
     scripts/include/tasklistmodel.h
+    scripts/include/widgetcontroller.h
     scripts/include/reminderscheduler.h
     scripts/include/singleinstance.h
 )
@@ -41,6 +45,7 @@ target_include_directories(tasknestcore PUBLIC
 
 target_link_libraries(tasknestcore PUBLIC
     Qt6::Core
+    Qt6::Gui
     Qt6::Sql
 )
 
@@ -80,6 +85,11 @@ qt_add_qml_module(appTaskNest
         scripts/main/TNTextField.qml
         scripts/main/TNComboBox.qml
         scripts/main/TNScrollBar.qml
+        scripts/main/DateTimeInput.js
+        scripts/main/TNSpinBox.qml
+        scripts/main/TNCalendar.qml
+        scripts/main/TNDateField.qml
+        scripts/main/TNTimeField.qml
         scripts/main/TNDialog.qml
         scripts/main/TNToast.qml
         scripts/main/QuickAddPanel.qml
@@ -90,6 +100,7 @@ qt_add_qml_module(appTaskNest
         scripts/main/EmptyState.qml
         scripts/main/TaskEditor.qml
         scripts/main/CleanupSettings.qml
+        scripts/main/FloatingWidget.qml
         scripts/main/MainView.qml
         scripts/main/Main.qml
 )

@@ -125,6 +125,30 @@ bool TaskListModel::reload(const TaskRepository::Query &base, Scope scope)
     return true;
 }
 
+QVariantMap TaskListModel::taskData(qint64 id)
+{
+    Task task;
+    if (!m_repository.getTask(id, &task)) {
+        // A task that is simply gone is not an error worth a banner.
+        if (!m_repository.lastError().contains(QStringLiteral("not found")))
+            reportRepositoryError();
+        return {};
+    }
+    QVariantMap map;
+    map.insert(QStringLiteral("id"), task.id);
+    map.insert(QStringLiteral("title"), task.title);
+    map.insert(QStringLiteral("notes"), task.notes);
+    map.insert(QStringLiteral("listName"), task.listName);
+    map.insert(QStringLiteral("priority"), task.priority);
+    map.insert(QStringLiteral("completed"), task.completed);
+    map.insert(QStringLiteral("reminderSent"), task.reminderSent);
+    map.insert(QStringLiteral("dueAt"),
+               task.dueAt ? QVariant(task.dueAt->toLocalTime()) : QVariant());
+    map.insert(QStringLiteral("reminderAt"),
+               task.reminderAt ? QVariant(task.reminderAt->toLocalTime()) : QVariant());
+    return map;
+}
+
 bool TaskListModel::refresh()
 {
     return reload(m_query, m_scope);

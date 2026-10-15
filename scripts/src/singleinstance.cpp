@@ -21,7 +21,10 @@ BOOL CALLBACK findWindowOfProcess(HWND window, LPARAM param)
     DWORD windowPid = 0;
     GetWindowThreadProcessId(window, &windowPid);
     // A visible top-level window (not an owned popup/tooltip) of that process.
-    if (windowPid == data->pid && IsWindowVisible(window) && GetWindow(window, GW_OWNER) == nullptr) {
+    // The floating widget is a tool window; the main window is what to bring forward.
+    const bool toolWindow = (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0;
+    if (windowPid == data->pid && IsWindowVisible(window) && !toolWindow
+        && GetWindow(window, GW_OWNER) == nullptr) {
         data->window = window;
         return FALSE; // stop
     }

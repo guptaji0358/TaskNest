@@ -75,7 +75,7 @@ Rules:
 - Default order (`Task::workflowLess`, mirrored by `TaskRepository::SortOrder::Workflow`): open tasks first; then earliest due date (undated last); then higher priority; then creation order. Changing the SQL or the comparator requires changing both.
 - The model updates incrementally: completing or re-timing a task *moves* its row; it never rebuilds the list.
 - Title search is a literal, Unicode case-insensitive substring match done in C++ (SQLite `LIKE` only folds ASCII). It composes with the view and the completion filter and never changes stored data.
-- Keyboard: Ctrl+N, Ctrl+F, Ctrl+1..5 (views), F1 (reference), Down/Up (search/add into the list, between rows), Space, Enter, Delete on a row, Ctrl+Enter to save from notes. Avoid shortcuts that collide with text editing.
+- Keyboard: Ctrl+N, Ctrl+F, Ctrl+Shift+W (floating widget), Ctrl+1..5 (views), F1 (reference), Down/Up (search/add into the list, between rows), Space, Enter, Delete on a row, Ctrl+Enter to save from notes. Avoid shortcuts that collide with text editing.
 - Destructive or repeatable actions (delete confirm, editor save) ignore a second activation while their dialog is closing.
 
 ## Quick Add, Undo Delete and Single Instance
@@ -97,6 +97,21 @@ Completed tasks are kept forever unless the user explicitly chooses otherwise.
 - **Database:** `TaskRepository::purgeCompleted` finds and deletes in one transaction with bound parameters and rolls back on any error or row-count mismatch; nothing is vacuumed (SQLite reuses freed pages; there is no automatic `VACUUM`). `tasks.completed_at` (schema v3, indexed for completed rows) is set when a task is completed, kept when it is completed again, cleared when reopened, and preserved by undo-restore. Migration backfilled it from `updated_at` for tasks that were already completed - never earlier than the real completion, so retention can only act later than it should, not sooner.
 - Failures are reported through `errorOccurred` and the dialogs; nothing is announced as removed unless the transaction committed.
 
+## Date and Time Input
+
+- Parsing/validation lives in `scripts/main/DateTimeInput.js` (a `.pragma library`, no UI), used by `Theme.parseDateTime` and the pickers, and tested directly by `tests/qml/tst_datetime.qml`. Results are local-time `Date`s; C++ converts to UTC exactly as before, and the stored format and schema are unchanged.
+- Accepted manual input: dates `YYYY-MM-DD` (also `YYYY/MM/DD`, `YYYY.MM.DD`, 1-digit month/day); times 24-hour `H:mm`, `HH:mm`, `HH:mm:ss` and the hyphen forms `HH-mm`, `HH-mm-ss` (minutes/seconds are two digits; `:` and `-` are not mixed). A valid entry is rewritten to `YYYY-MM-DD` / `HH:mm` (`HH:mm:ss` only when the seconds are not zero) when the field is left. An invalid entry is never changed or rolled into another day: the field keeps the typed text, gets the danger outline, and the form shows the reason (month length, leap year, range, a local time skipped by a clock change). Years 1000-9999.
+- Date-only values keep their defaults (due 23:59, reminder 09:00); the time field stays blank until the user sets it, and its picker starts at that default.
+- Components: `TNDateField` (calendar popup: click the field or its button, Alt+Down/F4; arrows, PageUp/PageDown, Home/End, Enter, T=today, Delete=clear, Esc=cancel; Clear/Cancel/Today buttons), `TNTimeField` (hour/minute spin boxes, seconds box when the value has seconds, quick presets, Clear/Cancel/Set), `TNCalendar`, `TNSpinBox`. Popup content is created only while the popup is open.
+
+## Floating Desktop Widget
+
+- `FloatingWidget.qml` is a separate frameless `Qt.Tool` top-level window (not in the taskbar, always on top by default, `transientParent: null` so it survives the main window being minimized). Show/hide it from the sidebar ("Floating widget"), Ctrl+Shift+W, or its own hide button / Esc / Alt+F4. It is **never** registered to start with Windows.
+- `WidgetController` (C++) holds the two read-only task views (Today, Upcoming) and the preferences. **All task changes go through the main `TaskListModel`** (complete/reopen, quick add, open in the main window via `taskData`); the main model's `tasksMutated` refreshes the views. No timers; the views also refresh when the app is re-activated.
+- Preferences are one JSON value in `app_metadata` (`widget_settings`): visibility, position, size, sections (Today, Upcoming, Quick add, Reminders, due/priority details), compact/comfortable, surface (Graphite/Deep/Raised, all from `Theme`), opacity (0.6-1.0), keep-on-top. Writes are debounced by a single-shot timer (0.4 s) and flushed on shutdown; unreadable values fall back to defaults and numbers are clamped.
+- A saved position that is no longer on a screen is moved back (`WidgetController::recoverPosition`; the title strip must stay reachable). The raw saved position is kept until the user moves the widget, so reconnecting a monitor restores it.
+- Closing the main window quits the application (`Main.qml onClosing`); `prepareForShutdown()` writes the preferences first and freezes visibility. The widget is shown at launch **only** when the `showOnLaunch` preference (Settings → Shortcuts & Startup, off by default) is on; the last session's open/closed state is not restored. Settings also holds the Start Menu shortcut toggle and a taskbar-pin helper (`ShortcutManager`; Windows has no silent pin API, so it creates the shortcut and reveals it for "Pin to taskbar"). The single-instance window activation skips tool windows.
+
 ## Database Location and Safety
 
 - File name: `tasknest.db`. Chosen by `Database::defaultDatabasePath()` in this order:
@@ -114,7 +129,7 @@ Completed tasks are kept forever unless the user explicitly chooses otherwise.
 
 - Every color, size, radius, spacing step and duration comes from `scripts/main/Theme.qml` (a QML singleton). Do not hard-code them in other QML files.
 - Visual direction: graphite surfaces with a cool undertone, one electric-lime accent (actions and the active state only), violet for reminders, amber/red only for time pressure and errors. Urgency is always conveyed by an icon and words as well as color.
-- Reusable components are prefixed `TN` (`TNButton`, `TNTextField`, `TNComboBox`, `TNDialog`, ...) plus `Icon` (vector line icons from `Theme.icons`), `TaskRow`, `NavItem`, `TaskCheck`, `ReminderBanner`, `EmptyState`, `CleanupSettings`. Build screens from these rather than styling stock controls inline.
+- Reusable components are prefixed `TN` (`TNButton`, `TNTextField`, `TNComboBox`, `TNDialog`, ...) plus `Icon` (vector line icons from `Theme.icons`), `TaskRow`, `NavItem`, `TaskCheck`, `ReminderBanner`, `EmptyState`, `CleanupSettings`, `TNDateField`, `TNTimeField`, `TNCalendar`, `TNSpinBox`, `FloatingWidget`. Build screens from these rather than styling stock controls inline.
 - `scripts/main/qmldir` lists every component so the UI tests can load the QML straight from the source folder; add new components to it **and** to `QML_FILES` in `CMakeLists.txt`.
 - Do not name a property `onX` where `X` is another property of the same item: QML reads it as that property's change handler (e.g. `accentText`, not `onAccent`).
 - Animations are short (`Theme.durationFast/Base`) and are turned off when Windows animation effects are disabled.

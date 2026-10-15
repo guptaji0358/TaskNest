@@ -92,21 +92,24 @@ Item {
                 placeholderText: "List (default Inbox)"
                 onAccepted: root.submitted()
             }
-            TNTextField {
+            TNDateField {
                 id: dateField
                 objectName: "quickDate"
+                label: "Due"
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
-                iconName: "today"
                 placeholderText: "Due YYYY-MM-DD"
-                invalid: root.errorText.indexOf("Due") === 0 || root.errorText.indexOf("That due") === 0
+                externalInvalid: root.errorText.indexOf("Due") === 0 || root.errorText.indexOf("That due") === 0
                 onAccepted: root.submitted()
             }
-            TNTextField {
+            TNTimeField {
                 id: timeField
                 objectName: "quickTime"
-                Layout.preferredWidth: 104
-                placeholderText: "HH:MM"
+                label: "Due"
+                defaultHour: 23
+                defaultMinute: 59
+                Layout.preferredWidth: 120
+                placeholderText: "HH:mm"
                 onAccepted: root.submitted()
             }
         }
@@ -116,21 +119,24 @@ Item {
             Layout.fillHeight: false
             spacing: Theme.s2
 
-            TNTextField {
+            TNDateField {
                 id: reminderDateField
                 objectName: "quickReminderDate"
+                label: "Reminder"
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
-                iconName: "bell"
                 placeholderText: "Remind YYYY-MM-DD"
-                invalid: root.errorText.indexOf("Reminder") === 0 || root.errorText.indexOf("That reminder") === 0
+                externalInvalid: root.errorText.indexOf("Reminder") === 0 || root.errorText.indexOf("That reminder") === 0
                 onAccepted: root.submitted()
             }
-            TNTextField {
+            TNTimeField {
                 id: reminderTimeField
                 objectName: "quickReminderTime"
-                Layout.preferredWidth: 104
-                placeholderText: "HH:MM"
+                label: "Reminder"
+                defaultHour: 9
+                defaultMinute: 0
+                Layout.preferredWidth: 120
+                placeholderText: "HH:mm"
                 onAccepted: root.submitted()
             }
             TNTextField {

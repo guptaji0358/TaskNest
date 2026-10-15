@@ -1199,4 +1199,371 @@ TestCase {
         compare(find("cleanupCurrent").text, "Current setting: Delete 14 days after completion")
         closeCleanup()
     }
+
+    // ---- date and time pickers -----------------------------------------------
+
+    // The editor scrolls; bring a field into the visible part before clicking it.
+    function reveal(item) {
+        const flick = find("editorScroll").contentItem
+        const y = item.mapToItem(flick.contentItem, 0, 0).y
+        flick.contentY = Math.max(0, Math.min(y - 40, flick.contentHeight - flick.height))
+        wait(30)
+    }
+
+    function openCalendarFor(objectName) {
+        const field = find(objectName)
+        reveal(field)
+        mouseClick(find("dateOpenButton", field))
+        tryCompare(field.calendarPopup, "opened", true)
+        return field
+    }
+
+    function test_calendarPicksADayAndNavigatesMonths() {
+        seed("cal")
+        const editor = openEditor()
+        const field = find("editorDate")
+        field.text = "2031-01-31"
+
+        openCalendarFor("editorDate")
+        compare(find("calendarTitle").text, "January 2031")
+        mouseClick(find("calendarNext"))
+        compare(find("calendarTitle").text, "February 2031")
+        mouseClick(find("calendarPrev"))
+        mouseClick(find("calendarPrev"))
+        compare(find("calendarTitle").text, "December 2030")
+        mouseClick(find("calendarNext"))
+        mouseClick(find("calendarNext"))
+        compare(find("calendarTitle").text, "February 2031")
+        mouseClick(find("calendarDay_2031-2-28")) // last day of a non-leap February
+        tryCompare(field.calendarPopup, "visible", false)
+        compare(field.text, "2031-02-28")
+
+        mouseClick(find("editorSave"))
+        tryCompare(editor, "visible", false)
+        const due = fixture.stored()[0].dueAt
+        compare(due.getFullYear(), 2031)
+        compare(due.getMonth(), 1)
+        compare(due.getDate(), 28)
+        compare(due.getHours(), 23) // date-only keeps its end-of-day default
+        compare(due.getMinutes(), 59)
+    }
+
+    function test_calendarClearAndCancelAreAvailable() {
+        seed("cal")
+        openEditor()
+        const field = find("editorReminderDate")
+        field.text = "2031-06-15"
+
+        openCalendarFor("editorReminderDate")
+        mouseClick(find("calendarCancel"))
+        tryCompare(field.calendarPopup, "visible", false)
+        compare(field.text, "2031-06-15") // unchanged
+
+        openCalendarFor("editorReminderDate")
+        mouseClick(find("calendarClear"))
+        tryCompare(field.calendarPopup, "visible", false)
+        compare(field.text, "")
+        mouseClick(find("editorCancel"))
+    }
+
+    function test_calendarWorksFromTheKeyboard() {
+        seed("cal")
+        openEditor()
+        const field = find("editorDate")
+        field.text = "2031-01-31"
+        field.forceActiveFocus()
+
+        keyClick(Qt.Key_Down, Qt.AltModifier)
+        tryCompare(field.calendarPopup, "opened", true)
+        keyClick(Qt.Key_PageDown)         // month end is kept inside the month
+        keyClick(Qt.Key_Left)
+        keyClick(Qt.Key_Return)
+        tryCompare(field.calendarPopup, "visible", false)
+        compare(field.text, "2031-02-27")
+        verify(field.activeFocus)         // focus returns to the field
+
+        keyClick(Qt.Key_F4)
+        tryCompare(field.calendarPopup, "opened", true)
+        keyClick(Qt.Key_Escape)
+        tryCompare(field.calendarPopup, "visible", false)
+        compare(field.text, "2031-02-27")
+        mouseClick(find("editorCancel"))
+    }
+
+    function test_clickingTheFieldOpensTheCalendarAndKeepsTyping() {
+        seed("cal")
+        openEditor()
+        const field = find("editorDate")
+        mouseClick(field)
+        tryCompare(field.calendarPopup, "opened", true)
+        verify(field.activeFocus) // typing still goes to the field
+        keyClick(Qt.Key_Escape)
+        mouseClick(find("editorCancel"))
+    }
+
+    function test_timePickerSetsAndLeavesBlankUntilSet() {
+        seed("time")
+        const editor = openEditor()
+        const field = find("editorReminderTime")
+        compare(field.text, "")
+        reveal(field)
+
+        mouseClick(find("timeOpenButton", field))
+        tryCompare(field.timePopup, "opened", true)
+        compare(find("timeHour").value, 9)   // starts at the field's default
+        compare(find("timeMinute").value, 0)
+        mouseClick(find("timeCancel"))
+        tryCompare(field.timePopup, "visible", false)
+        compare(field.text, "")             // nothing was set by looking
+
+        mouseClick(find("timeOpenButton", field))
+        tryCompare(field.timePopup, "opened", true)
+        find("timeHour").value = 7
+        find("timeMinute").value = 5
+        mouseClick(find("timeSet"))
+        tryCompare(field.timePopup, "visible", false)
+        compare(field.text, "07:05")
+
+        find("editorReminderDate").text = "2031-05-06"
+        mouseClick(find("editorSave"))
+        tryCompare(editor, "visible", false)
+        const r = fixture.stored()[0].reminderAt
+        compare(r.getHours(), 7)
+        compare(r.getMinutes(), 5)
+    }
+
+    function test_manualTimeVariantsAreNormalizedOnLeavingTheField() {
+        seed("manual")
+        openEditor()
+        const time = find("editorTime")
+        time.forceActiveFocus()
+        time.text = "9-05"
+        find("editorTitle").forceActiveFocus()
+        compare(time.text, "09:05")
+
+        time.forceActiveFocus()
+        time.text = "14-30-00"
+        find("editorTitle").forceActiveFocus()
+        compare(time.text, "14:30")
+
+        time.forceActiveFocus()
+        time.text = "14:30:45"
+        find("editorTitle").forceActiveFocus()
+        compare(time.text, "14:30:45")
+
+        const date = find("editorDate")
+        date.forceActiveFocus()
+        date.text = "2031/3/7"
+        find("editorTitle").forceActiveFocus()
+        compare(date.text, "2031-03-07")
+        mouseClick(find("editorCancel"))
+    }
+
+    function test_invalidManualInputKeepsTheTypedText() {
+        seed("bad")
+        const editor = openEditor()
+        const date = find("editorDate")
+        const time = find("editorTime")
+        date.forceActiveFocus()
+        date.text = "2031-02-30"
+        time.forceActiveFocus()
+        time.text = "24:00"
+        find("editorTitle").forceActiveFocus()
+        compare(date.text, "2031-02-30")   // not rolled into March, not cleared
+        compare(time.text, "24:00")
+        compare(date.invalid, true)
+        compare(time.invalid, true)
+
+        mouseClick(find("editorSave"))
+        compare(editor.visible, true)
+        verify(find("editorError").text.indexOf("does not exist") >= 0)
+        compare(date.text, "2031-02-30")
+        compare(fixture.stored()[0].hasDue, false)
+        mouseClick(find("editorCancel"))
+    }
+
+    function test_hyphenTimeWithSecondsIsStored() {
+        seed("secs")
+        const editor = openEditor()
+        find("editorDate").text = "2031-09-10"
+        find("editorTime").text = "08-15-30"
+        mouseClick(find("editorSave"))
+        tryCompare(editor, "visible", false)
+        const due = fixture.stored()[0].dueAt
+        compare(due.getHours(), 8)
+        compare(due.getMinutes(), 15)
+        compare(due.getSeconds(), 30)
+
+        // and it is shown with its seconds when edited again
+        openEditor()
+        compare(find("editorTime").text, "08:15:30")
+        mouseClick(find("editorCancel"))
+    }
+
+    // ---- floating widget -----------------------------------------------------
+
+    Component { id: spyComponent; SignalSpy {} }
+    Component { id: listModelComponent; ListModel {} }
+    readonly property var widgetComponent:
+        Qt.createComponent(Qt.resolvedUrl("../../scripts/main/FloatingWidget.qml"))
+
+    // Shows the widget (the controller's visibility drives its window).
+    function makeWidget(extra) {
+        fixture.widget.widgetVisible = true
+        const props = Object.assign({ controller: fixture.widget, taskModel: fixture.model }, extra || {})
+        const w = createTemporaryObject(widgetComponent, null, props)
+        verify(w !== null, widgetComponent.errorString())
+        tryCompare(w, "visible", true)
+        waitForRendering(w.contentItem)
+        return w
+    }
+    function wfind(w, name) { return find(name, w.contentItem) }
+    function spyOn(target, signalName) {
+        return createTemporaryObject(spyComponent, tc, { target: target, signalName: signalName })
+    }
+
+    function test_widgetShowsTodayAndUpcomingAndCanBeHidden() {
+        seed("due today", "", dayAt(0, 18))
+        seed("due later", "", dayAt(3, 9))
+        seed("undated")
+        const w = makeWidget()
+        tryCompare(wfind(w, "widgetTodayList"), "count", 1)
+        compare(wfind(w, "widgetUpcomingList").count, 1)
+
+        mouseClick(wfind(w, "widgetHide"))
+        tryCompare(w, "visible", false)
+        compare(fixture.widget.widgetVisible, false)
+        compare(storedTitles().length, 3) // hiding never touches tasks
+        compare(rowCount(), 3)
+    }
+
+    function test_widgetCompletesAndAddsTasksThroughTheMainModel() {
+        seed("finish me", "", dayAt(0, 23))
+        const w = makeWidget()
+        const list = wfind(w, "widgetTodayList")
+        tryCompare(list, "count", 1)
+        tryVerify(function () { return list.itemAtIndex(0) !== null })
+
+        mouseClick(find("widgetTaskCheck", list.itemAtIndex(0)))
+        tryCompare(list, "count", 0)
+        compare(fixture.stored()[0].completed, true)
+
+        // quick add from the widget: due today by default, so it shows up there
+        w.quickField.text = "Added in widget"
+        w.quickField.accepted()
+        tryCompare(list, "count", 1)
+        compare(storedTitles(), ["finish me", "Added in widget"])
+        compare(fixture.stored()[1].hasDue, true)
+        compare(w.quickField.text, "")
+        compare(rowCount(), 2) // the main window shows both
+    }
+
+    function test_widgetQuickAddWithoutDateAndEmptyTitle() {
+        const w = makeWidget()
+        w.quickField.accepted() // empty: nothing happens
+        compare(storedTitles(), [])
+        find("widgetDueChoice", w.contentItem).currentIndex = 2
+        w.quickField.text = "No date task"
+        w.quickField.accepted()
+        compare(storedTitles(), ["No date task"])
+        compare(fixture.stored()[0].hasDue, false)
+        compare(wfind(w, "widgetTodayList").count, 0)
+    }
+
+    function test_widgetSectionsFollowThePreferences() {
+        const w = makeWidget()
+        const c = fixture.widget
+        compare(wfind(w, "widgetTodaySection").visible, true)
+        c.showToday = false
+        compare(wfind(w, "widgetTodaySection").visible, false)
+        c.showUpcoming = false
+        c.showQuickAdd = false
+        compare(w.quickField.visible, false)
+        compare(wfind(w, "widgetNothingShown").visible, true)
+        c.showToday = true
+        compare(wfind(w, "widgetNothingShown").visible, false)
+        compare(wfind(w, "widgetTodaySection").visible, true)
+    }
+
+    function test_widgetSettingsPopupChangesAndPersistsPreferences() {
+        const w = makeWidget()
+        mouseClick(wfind(w, "widgetSettingsButton"))
+        tryVerify(function () { return wfind(w, "widgetOption_showUpcoming") !== null
+                                       && wfind(w, "widgetOption_showUpcoming").visible })
+        mouseClick(wfind(w, "widgetOption_showUpcoming"))
+        compare(fixture.widget.showUpcoming, false)
+        compare(wfind(w, "widgetUpcomingSection").visible, false)
+
+        fixture.widget.opacity = 0.7
+        compare(w.opacity, 0.7)
+        fixture.widget.opacity = 0.01 // clamped to a readable minimum
+        verify(w.opacity >= 0.6)
+
+        fixture.widget.compact = true
+        compare(w.compact, true)
+        const before = String(w.surfaceColor)
+        fixture.widget.surface = 1
+        verify(String(w.surfaceColor) !== before)
+    }
+
+    function test_widgetOpensATaskInTheMainWindow() {
+        seed("open from widget", "", dayAt(0, 20))
+        const w = makeWidget()
+        const list = wfind(w, "widgetTodayList")
+        tryCompare(list, "count", 1)
+        tryVerify(function () { return list.itemAtIndex(0) !== null })
+        const spy = spyOn(w, "openTaskRequested")
+        mouseClick(find("widgetTaskOpen", list.itemAtIndex(0)))
+        tryCompare(spy, "count", 1)
+
+        view.openTask(spy.signalArguments[0][0])
+        tryCompare(view.editorDialog, "visible", true)
+        compare(find("editorTitle").text, "open from widget")
+        mouseClick(find("editorCancel"))
+    }
+
+    function test_widgetListsFiredRemindersAndRelaysTheButtons() {
+        const reminders = createTemporaryObject(listModelComponent, tc)
+        const w = makeWidget({ remindersModel: reminders })
+        compare(wfind(w, "widgetReminders").visible, false) // only when relevant
+
+        reminders.append({ taskId: 7, title: "Call back", when: new Date() })
+        tryCompare(wfind(w, "widgetReminders"), "visible", true)
+        const done = spyOn(w, "reminderDoneRequested")
+        const dismiss = spyOn(w, "reminderDismissRequested")
+        waitForRendering(w.contentItem)
+        wait(100) // let the new row get its geometry
+        mouseClick(wfind(w, "widgetReminderDone"))
+        compare(done.count, 1)
+        compare(done.signalArguments[0][0], 7)
+        mouseClick(wfind(w, "widgetReminderDismiss"))
+        compare(dismiss.count, 1)
+
+        fixture.widget.showReminders = false
+        compare(wfind(w, "widgetReminders").visible, false)
+    }
+
+    function test_widgetOffScreenPositionIsRecovered() {
+        fixture.widget.x = 90000
+        fixture.widget.y = -70000
+        const w = makeWidget()
+        const s = w.screen
+        verify(w.x >= s.virtualX - 400 && w.x < s.virtualX + s.width, "x on screen: " + w.x)
+        verify(w.y >= s.virtualY && w.y < s.virtualY + s.height, "y on screen: " + w.y)
+    }
+
+    function test_widgetCanBeClosedWhileTheMainWindowKeepsWorking() {
+        seed("survivor", "", dayAt(0, 12))
+        const w = makeWidget()
+        w.close() // the system close path: hides, does not quit or delete
+        tryCompare(w, "visible", false)
+        compare(fixture.widget.widgetVisible, false)
+        w.destroy()
+        wait(50)
+        // the main view and model are unaffected and still update the widget views
+        addViaUi("after the widget is gone")
+        compare(storedTitles().length, 2)
+        verify(fixture.model.setCompleted(fixture.stored()[0].id, true))
+        compare(rowCount(), 2)
+    }
 }

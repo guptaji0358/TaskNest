@@ -10,9 +10,11 @@
 
 #include "database.h"
 #include "reminderscheduler.h"
+#include "shortcutmanager.h"
 #include "singleinstance.h"
 #include "tasklistmodel.h"
 #include "taskrepository.h"
+#include "widgetcontroller.h"
 
 int main(int argc, char *argv[])
 {
@@ -41,6 +43,10 @@ int main(int argc, char *argv[])
     TaskRepository repository(database);
     TaskListModel taskModel(repository);
     ReminderScheduler reminders(repository); // destroyed before the model/repository
+    // Floating widget backing object: two read-only task views plus the saved
+    // widget preferences. Destroyed before the model/repository it uses.
+    WidgetController widget(taskModel, repository);
+    ShortcutManager shortcuts;
 
     QString startupError = databaseReady ? QString() : database.lastError();
     // The cleanup policy is read before the first load, so completed tasks the
@@ -55,15 +61,19 @@ int main(int argc, char *argv[])
         qCritical().noquote() << "Startup failed:" << startupError;
 
     if (startupError.isEmpty()) {
+        widget.load();
+        widget.refreshViews();
+
         // Any task change can move the next reminder; so can returning to the
         // app (clock/date changes) and resuming from sleep.
         QObject::connect(&taskModel, &TaskListModel::tasksMutated,
                          &reminders, &ReminderScheduler::reschedule);
         QObject::connect(&app, &QGuiApplication::applicationStateChanged, &reminders,
-                         [&reminders, &taskModel](Qt::ApplicationState state) {
+                         [&reminders, &taskModel, &widget](Qt::ApplicationState state) {
                              if (state == Qt::ApplicationActive) {
                                  // A retention period may have run out while away.
                                  taskModel.applyCleanup();
+                                 widget.refreshViews(); // the day may have changed
                                  reminders.reschedule();
                              }
                          });
@@ -82,10 +92,15 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     QQmlEngine::setObjectOwnership(&taskModel, QQmlEngine::CppOwnership);
     QQmlEngine::setObjectOwnership(&reminders, QQmlEngine::CppOwnership);
+    QQmlEngine::setObjectOwnership(&widget, QQmlEngine::CppOwnership);
+    QQmlEngine::setObjectOwnership(&shortcuts, QQmlEngine::CppOwnership);
     engine.setInitialProperties({
+        {QStringLiteral("shortcutManager"), QVariant::fromValue<QObject *>(&shortcuts)},
         {QStringLiteral("databaseError"), startupError},
         {QStringLiteral("databasePath"), QDir::toNativeSeparators(database.databasePath())},
         {QStringLiteral("reducedMotion"), reducedMotion},
+        {QStringLiteral("widgetController"),
+         QVariant::fromValue<QObject *>(startupError.isEmpty() ? &widget : nullptr)},
         {QStringLiteral("reminderScheduler"),
          QVariant::fromValue<QObject *>(startupError.isEmpty() ? &reminders : nullptr)},
         // No model when the database is unusable: no task operations are possible.

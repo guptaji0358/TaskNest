@@ -12,6 +12,8 @@ Item {
     required property string databasePath
     required property var taskModel // null when the database is unavailable
     property var reminderScheduler: null // ReminderScheduler, optional
+    property var widgetController: null  // WidgetController, optional
+    property var shortcutManager: null   // ShortcutManager, optional
 
     // Emitted when a reminder is announced (the window can flash the taskbar).
     signal reminderArrived()
@@ -31,6 +33,8 @@ Item {
     readonly property alias editorDialog: editor
     readonly property alias deleteConfirmDialog: deleteDialog
     readonly property alias cleanupSettings: cleanup
+    // Fired, not yet handled reminders (the floating widget shows them too).
+    readonly property alias reminderList: reminders
 
     property string navKey: "all"
     property string errorText: ""   // last model error, shown in the banner
@@ -189,6 +193,23 @@ Item {
     function notify(text, icon) {
         discardUndoOffer()
         toast.show(text, "", 5000, icon || "check")
+    }
+
+    // Opens a task in the editor (used by the floating widget).
+    function openTask(taskId) {
+        if (!databaseOk)
+            return
+        const data = taskModel.taskData(taskId)
+        if (data.id === undefined) {
+            notify("That task no longer exists.", "warning")
+            return
+        }
+        editor.openFor(data)
+    }
+
+    function toggleWidget() {
+        if (widgetController)
+            widgetController.widgetVisible = !widgetController.widgetVisible
     }
 
     function discardUndoOffer() {
@@ -378,6 +399,11 @@ Item {
         sequence: "Ctrl+Z"
         enabled: root.undoToastActive && !root.textInputHasFocus
         onActivated: root.undoDelete()
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+W"
+        enabled: root.databaseOk && root.widgetController !== null
+        onActivated: root.toggleWidget()
     }
     Shortcut {
         sequence: "F1"
@@ -570,6 +596,17 @@ Item {
                     }
                 }
 
+                NavItem {
+                    objectName: "widgetToggle"
+                    visible: root.widgetController !== null
+                    Layout.fillWidth: true
+                    iconName: "widget"
+                    label: "Floating widget"
+                    active: root.widgetController ? root.widgetController.widgetVisible : false
+                    collapsed: root.railMode
+                    Accessible.description: "Show or hide the floating desktop widget (Ctrl+Shift+W)"
+                    onClicked: root.toggleWidget()
+                }
                 NavItem {
                     objectName: "settingsButton"
                     Layout.fillWidth: true
@@ -921,6 +958,8 @@ Item {
         id: cleanup
         objectName: "cleanupSettings"
         taskModel: root.taskModel
+        widgetController: root.widgetController
+        shortcutManager: root.shortcutManager
         onNotice: (text) => root.notify(text, "check")
     }
 
@@ -936,6 +975,7 @@ Item {
             { keys: "Ctrl+Shift+N", what: "New task with details (priority, list, due, reminder)" },
             { keys: "Ctrl+Z", what: "Undo a delete, while the notice is showing" },
             { keys: "Ctrl+F", what: "Search tasks" },
+            { keys: "Ctrl+Shift+W", what: "Show or hide the floating widget" },
             { keys: "Ctrl+1 \u2013 5", what: "All Tasks, Today, Upcoming, Completed, Inbox" },
             { keys: "\u2193 / \u2191", what: "From search or add: into the list; between tasks" },
             { keys: "Space", what: "Complete or reopen the focused task" },

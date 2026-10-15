@@ -10,6 +10,9 @@ Item {
     id: root
 
     property var taskModel: null // TaskListModel
+    property var widgetController: null // WidgetController (show on launch)
+    property var shortcutManager: null // ShortcutManager (Start Menu, taskbar)
+    property string shortcutNote: ""
     // A short result for the main window's toast.
     signal notice(string text)
 
@@ -152,7 +155,13 @@ Item {
         width: Math.min(500, parent ? parent.width - 32 : 500)
         property bool closing: false
 
-        onAboutToShow: { closing = false; root.loadFromModel() }
+        onAboutToShow: {
+            closing = false
+            root.shortcutNote = ""
+            if (root.shortcutManager)
+                root.shortcutManager.refresh()
+            root.loadFromModel()
+        }
         onAboutToHide: closing = true
         onOpened: modeBox.forceActiveFocus()
 
@@ -252,6 +261,106 @@ Item {
                 color: Theme.danger
                 text: root.errorText
                 Accessible.role: Accessible.AlertMessage
+            }
+
+            // ---- Shortcuts & Startup: compact, low priority ----------------
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+            TNLabel {
+                role: "overline"
+                text: "Shortcuts & Startup"
+            }
+
+            ColumnLayout {
+                objectName: "shortcutsStartup"
+                Layout.fillWidth: true
+                spacing: 0
+
+                component MiniSwitch: Switch {
+                    id: sw
+                    implicitHeight: 26
+                    padding: 0
+                    leftPadding: 0
+                    hoverEnabled: true
+                    Layout.fillWidth: true
+                    indicator: Rectangle {
+                        x: sw.width - width
+                        y: (sw.height - height) / 2
+                        width: 30
+                        height: 16
+                        radius: 8
+                        color: sw.checked ? Theme.accent : "transparent"
+                        border.width: sw.visualFocus ? 2 : 1.5
+                        border.color: sw.visualFocus ? Theme.focus
+                                      : sw.checked ? Theme.accent : Theme.borderStrong
+                        Rectangle {
+                            x: sw.checked ? parent.width - width - 3 : 3
+                            y: 3
+                            width: 10
+                            height: 10
+                            radius: 5
+                            color: sw.checked ? Theme.accentText : Theme.textMuted
+                        }
+                    }
+                    contentItem: Text {
+                        text: sw.text
+                        verticalAlignment: Text.AlignVCenter
+                        color: Theme.textMuted
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontLabel
+                        elide: Text.ElideRight
+                    }
+                }
+
+                MiniSwitch {
+                    objectName: "startMenuSwitch"
+                    text: "Start Menu shortcut"
+                    enabled: root.shortcutManager !== null && root.shortcutManager.supported
+                    checked: root.shortcutManager ? root.shortcutManager.startMenuShortcut : false
+                    onToggled: {
+                        root.shortcutNote = ""
+                        if (!root.shortcutManager.setStartMenuShortcut(checked))
+                            root.shortcutNote = root.shortcutManager.lastError()
+                        checked = Qt.binding(function () {
+                            return root.shortcutManager.startMenuShortcut })
+                    }
+                }
+                MiniSwitch {
+                    objectName: "taskbarPinSwitch"
+                    text: "Taskbar pin"
+                    enabled: root.shortcutManager !== null && root.shortcutManager.supported
+                    checked: root.shortcutManager ? root.shortcutManager.taskbarPinned : false
+                    onToggled: {
+                        // Windows has no silent pin: guide the user instead.
+                        const wasOn = root.shortcutManager.taskbarPinned
+                        root.shortcutNote = wasOn
+                            ? "Unpin from the taskbar with right-click → Unpin."
+                            : root.shortcutManager.requestTaskbarPin()
+                                || root.shortcutManager.lastError()
+                        checked = Qt.binding(function () {
+                            return root.shortcutManager.taskbarPinned })
+                    }
+                }
+                MiniSwitch {
+                    objectName: "showOnLaunchSwitch"
+                    text: "Show floating window on launch"
+                    enabled: root.widgetController !== null
+                    checked: root.widgetController ? root.widgetController.showOnLaunch : false
+                    onToggled: {
+                        root.widgetController.showOnLaunch = checked
+                        checked = Qt.binding(function () {
+                            return root.widgetController.showOnLaunch })
+                    }
+                }
+
+                TNLabel {
+                    objectName: "shortcutNote"
+                    Layout.fillWidth: true
+                    visible: root.shortcutNote !== ""
+                    role: "caption"
+                    wrapMode: Text.Wrap
+                    text: root.shortcutNote
+                }
             }
         }
 
