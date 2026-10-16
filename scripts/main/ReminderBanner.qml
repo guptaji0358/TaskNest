@@ -19,10 +19,25 @@ Rectangle {
     border.width: 1
     border.color: Theme.secondaryLine
 
-    NumberAnimation on opacity {
-        from: 0
-        to: 1
-        duration: Theme.durationBase
+    // Arrival: fades in while sliding down a few pixels (instant with Reduce motion).
+    transform: Translate { id: slide }
+    ParallelAnimation {
+        running: true
+        NumberAnimation { target: banner; property: "opacity"; from: 0; to: 1
+                          duration: Theme.durationBase; easing.type: Theme.easeOut }
+        NumberAnimation { target: slide; property: "y"; from: -Theme.enterOffset; to: 0
+                          duration: Theme.durationBase; easing.type: Theme.easeOut }
+    }
+
+    Rectangle {
+        height: 1
+        anchors.top: parent.top
+        anchors.topMargin: 1
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: Theme.radiusMd
+        anchors.rightMargin: Theme.radiusMd
+        color: Theme.secondaryLine
     }
 
     Rectangle {

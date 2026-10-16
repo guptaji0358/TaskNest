@@ -12,6 +12,9 @@ Item {
     property var taskModel: null // TaskListModel
     property var widgetController: null // WidgetController (show on launch)
     property var shortcutManager: null // ShortcutManager (Start Menu, taskbar)
+    property var integrationServer: null // IntegrationServer (local API)
+    property var globalHotkey: null // GlobalHotkey (system-wide Quick Add)
+    property var captureHotkey: null // GlobalHotkey (capture selection from other apps)
     property string shortcutNote: ""
     // A short result for the main window's toast.
     signal notice(string text)
@@ -140,6 +143,12 @@ Item {
     }
 
     Connections {
+        target: root.integrationServer
+        ignoreUnknownSignals: true
+        function onErrorOccurred(message) { root.shortcutNote = message }
+    }
+
+    Connections {
         target: root.taskModel
         function onErrorOccurred(message) {
             if (settings.visible || saveConfirm.visible || clearConfirm.visible)
@@ -151,7 +160,7 @@ Item {
     TNDialog {
         id: settings
         objectName: "cleanupDialog"
-        title: "Completed tasks"
+        title: "Settings"
         width: Math.min(500, parent ? parent.width - 32 : 500)
         property bool closing: false
 
@@ -167,6 +176,11 @@ Item {
 
         contentItem: ColumnLayout {
             spacing: Theme.s3
+
+            TNLabel {
+                role: "overline"
+                text: "Completed tasks"
+            }
 
             TNLabel {
                 objectName: "cleanupCurrent"
@@ -268,7 +282,7 @@ Item {
 
             TNLabel {
                 role: "overline"
-                text: "Shortcuts & Startup"
+                text: "Shortcuts, startup & motion"
             }
 
             ColumnLayout {
@@ -339,6 +353,145 @@ Item {
                                 || root.shortcutManager.lastError()
                         checked = Qt.binding(function () {
                             return root.shortcutManager.taskbarPinned })
+                    }
+                }
+                MiniSwitch {
+                    objectName: "linksSwitch"
+                    text: "Open tasknest:// links"
+                    enabled: root.shortcutManager !== null && root.shortcutManager.supported
+                    checked: root.shortcutManager ? root.shortcutManager.linksRegistered : false
+                    onToggled: {
+                        root.shortcutNote = ""
+                        if (!root.shortcutManager.setLinksRegistered(checked))
+                            root.shortcutNote = root.shortcutManager.lastError()
+                        checked = Qt.binding(function () {
+                            return root.shortcutManager.linksRegistered })
+                    }
+                }
+                MiniSwitch {
+                    objectName: "hotkeySwitch"
+                    text: "Global Quick Add shortcut"
+                    enabled: root.globalHotkey !== null
+                    checked: root.globalHotkey ? root.globalHotkey.enabled : false
+                    onToggled: {
+                        root.shortcutNote = ""
+                        root.globalHotkey.enabled = checked
+                        checked = Qt.binding(function () { return root.globalHotkey.enabled })
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.globalHotkey !== null && root.globalHotkey.enabled
+                    spacing: Theme.s2
+                    TNLabel {
+                        Layout.fillWidth: true
+                        role: "caption"
+                        objectName: "hotkeyStatus"
+                        wrapMode: Text.Wrap
+                        color: root.globalHotkey && root.globalHotkey.registered
+                               ? Theme.textMuted : Theme.warning
+                        text: !root.globalHotkey ? ""
+                              : root.globalHotkey.registered
+                                ? "Active: " + root.globalHotkey.shortcut
+                                : root.globalHotkey.lastError
+                    }
+                    TNComboBox {
+                        objectName: "hotkeyChoice"
+                        Layout.preferredWidth: 170
+                        implicitHeight: 30
+                        model: root.globalHotkey ? root.globalHotkey.choices : []
+                        currentIndex: root.globalHotkey
+                                      ? Math.max(0, root.globalHotkey.choices.indexOf(root.globalHotkey.shortcut)) : 0
+                        Accessible.name: "Quick Add shortcut"
+                        onActivated: root.globalHotkey.shortcut = currentText
+                    }
+                }
+                MiniSwitch {
+                    objectName: "captureSwitch"
+                    text: "Capture selection from other apps"
+                    enabled: root.captureHotkey !== null
+                    checked: root.captureHotkey ? root.captureHotkey.enabled : false
+                    onToggled: {
+                        root.shortcutNote = ""
+                        root.captureHotkey.enabled = checked
+                        checked = Qt.binding(function () { return root.captureHotkey.enabled })
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.captureHotkey !== null && root.captureHotkey.enabled
+                    spacing: Theme.s2
+                    TNLabel {
+                        Layout.fillWidth: true
+                        role: "caption"
+                        objectName: "captureStatus"
+                        wrapMode: Text.Wrap
+                        color: root.captureHotkey && root.captureHotkey.registered
+                               ? Theme.textMuted : Theme.warning
+                        text: !root.captureHotkey ? ""
+                              : root.captureHotkey.registered
+                                ? "Active: " + root.captureHotkey.shortcut
+                                  + ". Select text in another app, press it, review, then Capture."
+                                : root.captureHotkey.lastError
+                    }
+                    TNComboBox {
+                        objectName: "captureChoice"
+                        Layout.preferredWidth: 170
+                        implicitHeight: 30
+                        model: root.captureHotkey ? root.captureHotkey.choices : []
+                        currentIndex: root.captureHotkey
+                                      ? Math.max(0, root.captureHotkey.choices.indexOf(root.captureHotkey.shortcut)) : 0
+                        Accessible.name: "Capture selection shortcut"
+                        onActivated: root.captureHotkey.shortcut = currentText
+                    }
+                }
+                TNLabel {
+                    Layout.fillWidth: true
+                    visible: root.captureHotkey !== null && root.captureHotkey.enabled
+                    role: "caption"
+                    color: Theme.textFaint
+                    wrapMode: Text.Wrap
+                    text: "Works only with apps that share their selection through Windows UI "
+                          + "Automation. Others open an empty window to paste into. Password "
+                          + "fields are never read; the clipboard is not touched."
+                }
+                MiniSwitch {
+                    objectName: "browserHostSwitch"
+                    text: "Browser capture (Chrome / Edge)"
+                    enabled: root.shortcutManager !== null && root.shortcutManager.supported
+                    checked: root.shortcutManager ? root.shortcutManager.browserHostRegistered : false
+                    onToggled: {
+                        root.shortcutNote = ""
+                        if (!root.shortcutManager.setBrowserHostRegistered(checked))
+                            root.shortcutNote = root.shortcutManager.lastError()
+                        else if (checked && root.integrationServer && !root.integrationServer.enabled)
+                            root.shortcutNote = "Also turn on \u201CLocal integration API\u201D below; "
+                                                + "browser capture needs it."
+                        checked = Qt.binding(function () {
+                            return root.shortcutManager.browserHostRegistered })
+                    }
+                }
+                MiniSwitch {
+                    objectName: "integrationSwitch"
+                    text: "Local integration API"
+                    enabled: root.integrationServer !== null
+                    checked: root.integrationServer ? root.integrationServer.listening : false
+                    onToggled: {
+                        root.shortcutNote = ""
+                        root.integrationServer.enabled = checked
+                        checked = Qt.binding(function () {
+                            return root.integrationServer.listening })
+                    }
+                }
+                MiniSwitch {
+                    objectName: "reduceMotionSwitch"
+                    text: "Reduce motion"
+                    enabled: root.widgetController !== null
+                    checked: root.widgetController ? root.widgetController.reduceMotion : false
+                    onToggled: {
+                        root.widgetController.reduceMotion = checked
+                        checked = Qt.binding(function () {
+                            return root.widgetController.reduceMotion })
                     }
                 }
                 MiniSwitch {

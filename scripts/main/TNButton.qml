@@ -32,6 +32,11 @@ Button {
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
 
+    // Press feedback is essential, so it keeps working with Reduce motion
+    // (pressScale is 1 then: no movement, the color change still shows).
+    scale: down ? Theme.pressScale : 1.0
+    Behavior on scale { NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easeOut } }
+
     // Qt buttons activate on Space only; Windows users also expect Enter on a
     // focused button (especially in dialogs).
     Keys.onReturnPressed: (event) => {
@@ -110,5 +115,18 @@ Button {
             }
         }
         Behavior on color { ColorAnimation { duration: Theme.durationFast } }
+
+        // lit top edge on raised variants
+        Rectangle {
+            visible: control.variant !== "ghost" && control.enabled
+            height: 1
+            anchors.top: parent.top
+            anchors.topMargin: 1
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: Theme.radiusSm
+            anchors.rightMargin: Theme.radiusSm
+            color: control._filled ? Qt.rgba(1, 1, 1, 0.35) : Theme.highlight
+        }
     }
 }

@@ -301,6 +301,7 @@ bool TaskListModel::addTask(const QString &title, const QString &notes, const QS
     Task created;
     if (!m_repository.addTask(draft, &created))
         return reportRepositoryError();
+    m_lastAddedId = created.id;
     return applyChanged(created);
 }
 

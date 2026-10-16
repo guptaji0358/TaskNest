@@ -126,11 +126,15 @@ Window {
         readonly property var due: Theme.dueInfo(model.dueAt, model.completed)
 
         HoverHandler { id: hover }
+        // Same layered treatment as the main list.
         Rectangle {
             anchors.fill: parent
+            anchors.topMargin: 1
+            anchors.bottomMargin: 1
             radius: Theme.radiusSm
             color: hover.hovered || checkBox.visualFocus || openButton.visualFocus
-                   ? Theme.surfaceRaised : "transparent"
+                   ? Theme.layerMid : Theme.layerLow
+            Behavior on color { ColorAnimation { duration: Theme.durationFast } }
         }
 
         RowLayout {
@@ -265,6 +269,18 @@ Window {
         color: win.surfaceColor
         border.width: 1
         border.color: Theme.borderStrong
+
+        // lit top edge, as on dialogs
+        Rectangle {
+            height: 1
+            anchors.top: parent.top
+            anchors.topMargin: 1
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: Theme.radiusLg
+            anchors.rightMargin: Theme.radiusLg
+            color: Theme.highlightStrong
+        }
 
         // Controls inherit this palette (selection, popups, check boxes).
         palette.window: Theme.bg

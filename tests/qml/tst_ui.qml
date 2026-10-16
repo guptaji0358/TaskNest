@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtTest
+import "../../scripts/main"
 
 // Drives the real MainView.qml with simulated mouse/keyboard input.
 TestCase {
@@ -88,11 +89,57 @@ TestCase {
         return d
     }
 
+    // Keyboard input only reaches items while the OS considers the test window
+    // active. If another application takes the foreground mid-test (this machine
+    // is also in use), the window loses activation and key events go nowhere.
+    // Count it, so a failure can be attributed instead of guessed at.
+    property int activationLosses: 0
+    Connections {
+        target: tc.Window.window
+        function onActiveChanged() {
+            if (!tc.Window.window.active)
+                tc.activationLosses++
+        }
+    }
+
+    // Objects that dialogs and popups put into the window-level overlay, which
+    // is not a child of the view that created them.
+    readonly property var overlayNames:
+        ["cleanupModeBox", "editorTitle", "deleteCancel", "calendarPopup", "timePopup",
+         "shortcutsDialog", "cleanupSaveCancel", "clearCancel"]
+
+    function cleanup() {
+        if (tc.currentTestFailed && tc.activationLosses > 0)
+            console.warn("DIAG: the test window lost OS activation " + tc.activationLosses
+                         + " time(s) during this test; failure is environmental")
+        // Destroy the view now and wait until it, and every dialog it put into
+        // the overlay, is really gone. Otherwise find() (first match wins) in the
+        // next test can hit the previous test's closed dialog and send it focus
+        // and keys that the new view never sees.
+        if (view) {
+            const old = view
+            view = null
+            old.destroy()
+        }
+        tryVerify(function () {
+            if (countNamed("taskList", tc.Window.window.contentItem) !== 0)
+                return false
+            for (let i = 0; i < overlayNames.length; ++i) {
+                if (find(overlayNames[i]) !== null)
+                    return false
+            }
+            return true
+        }, 5000, "the previous view and its dialogs were removed")
+    }
+
     function init() {
+        tc.activationLosses = 0
         // A window that is not exposed is not rendered, so delegates would never
         // be created; make sure the test window is up front before each test.
-        tc.Window.window.raise()
-        tc.Window.window.requestActivate()
+        // If another application holds the foreground the window is not
+        // exposed or active and nothing below can work: skip visibly (as the
+        // keyboard tests already do) instead of reporting misleading failures.
+        activateWindow()
         verify(fixture.reset())
         view = createTemporaryObject(viewComponent, tc, {
             width: tc.width, height: tc.height,
@@ -102,6 +149,27 @@ TestCase {
         })
         verify(view !== null, viewComponent.errorString())
         waitForRendering(view)
+        // find() returns the first match, so a view left over from the previous
+        // test would silently receive this test's input.
+        compare(countNamed("taskList", tc.Window.window.contentItem), 1, "exactly one main view exists")
+    }
+
+    // State of the window and focus, appended to failure messages so that an
+    // intermittent failure says what the environment looked like.
+    function diag(text) {
+        const w = tc.Window.window
+        const f = w.activeFocusItem
+        return text + " [window active=" + w.active + " size=" + w.width + "x" + w.height
+               + " visibility=" + w.visibility + " focus=" + (f ? (f.objectName || String(f)) : "none")
+               + " views=" + countNamed("taskList", w.contentItem) + "]"
+    }
+
+    function countNamed(name, root) {
+        let n = root.objectName === name ? 1 : 0
+        const kids = root.children
+        for (let i = 0; i < kids.length; ++i)
+            n += countNamed(name, kids[i])
+        return n
     }
 
     // ---- task creation ------------------------------------------------------
@@ -187,6 +255,40 @@ TestCase {
         const editor = view.editorDialog
         tryCompare(editor, "visible", true)
         return editor
+    }
+
+    function test_tabInNotesMovesFocusAndKeepsTheNotesUnchanged() {
+        seed("Tab target")
+        openEditor()
+        const notes = find("editorNotes")
+        notes.text = "abc"
+        notes.forceActiveFocus()
+        keyClick(Qt.Key_Tab)
+        compare(notes.text, "abc") // no tab character was typed
+        tryVerify(function () { return find("editorPriority").activeFocus }, 2000)
+        mouseClick(find("editorCancel"))
+    }
+
+    // The test window is short (520 px): the form scrolls, the actions stay.
+    function test_shortWindowKeepsEveryFieldAndTheActionsReachable() {
+        seed("Short window")
+        openEditor()
+        const scroll = find("editorScroll")
+        verify(view.editorDialog.shortWindow, diag("editor shortWindow=" + view.editorDialog.shortWindow
+              + " overlayHeight=" + view.editorDialog.parent.height))
+        const save = find("editorSave")
+        const cancel = find("editorCancel")
+        verify(save.mapToItem(null, 0, 0).y + save.height <= tc.height, "Save is on screen")
+        verify(cancel.mapToItem(null, 0, 0).y + cancel.height <= tc.height, "Cancel is on screen")
+
+        // Focusing the last field scrolls it into view.
+        const reminder = find("editorReminderTime")
+        reminder.forceActiveFocus()
+        tryVerify(function () {
+            const y = reminder.mapToItem(scroll, 0, 0).y
+            return y >= 0 && y + reminder.height <= scroll.height + 1
+        }, 2000, "Reminder time scrolled into view")
+        mouseClick(find("editorCancel"))
     }
 
     function test_editSavesAllFields() {
@@ -1086,6 +1188,265 @@ TestCase {
         tryVerify(function () { return row(0).activeFocus }, 2000)
     }
 
+    // ---- compact Quick Add window (global shortcut / tasknest://quickadd) ------
+
+    readonly property var captureComponent:
+        Qt.createComponent(Qt.resolvedUrl("../../scripts/main/QuickCaptureWindow.qml"))
+
+    function makeCapture() {
+        const w = createTemporaryObject(captureComponent, null, { taskModel: fixture.model })
+        verify(w !== null, captureComponent.errorString())
+        w.present()
+        tryCompare(w, "visible", true)
+        waitForRendering(w.contentItem)
+        return w
+    }
+    function cfind(w, name) { return find(name, w.contentItem) }
+
+    function test_quickCaptureAddsOneTaskAndClosesWithoutTouchingTheMainView() {
+        const w = makeCapture()
+        compare(view.visible, true)          // the main view is simply there, untouched
+        compare(fixture.widget.widgetVisible, false) // and the widget did not open
+        cfind(w, "captureTitle").text = "  From the shortcut  "
+        mouseClick(cfind(w, "captureAdd"))
+        tryCompare(w, "visible", false)
+        compare(storedTitles(), ["From the shortcut"])
+        // a second activation while it is closing adds nothing
+        w.submit()
+        compare(storedTitles().length, 1)
+        compare(fixture.widget.widgetVisible, false)
+    }
+
+    function test_quickCaptureCancelAndBlankTitleSaveNothing() {
+        const w = makeCapture()
+        mouseClick(cfind(w, "captureAdd"))   // blank title
+        compare(w.visible, true)
+        verify(cfind(w, "captureError").visible)
+        compare(storedTitles(), [])
+
+        cfind(w, "captureTitle").text = "Never saved"
+        mouseClick(cfind(w, "captureCancel"))
+        tryCompare(w, "visible", false)
+        compare(storedTitles(), [])
+
+        // opening it again starts clean, and a repeat present() does not duplicate
+        w.present()
+        tryCompare(w, "visible", true)
+        compare(cfind(w, "captureTitle").text, "")
+        w.present()
+        compare(w.visible, true)
+        compare(storedTitles(), [])
+    }
+
+    function test_quickCaptureInvalidDateKeepsTheWindowAndTheText() {
+        const w = makeCapture()
+        cfind(w, "captureTitle").text = "Has a bad date"
+        w.detailsOpen = true
+        tryVerify(function () { return cfind(w, "quickDate") !== null && cfind(w, "quickDate").visible })
+        cfind(w, "quickDate").text = "2026-02-31"
+        mouseClick(cfind(w, "captureAdd"))
+        compare(w.visible, true)
+        compare(cfind(w, "captureTitle").text, "Has a bad date")
+        compare(storedTitles(), [])
+        mouseClick(cfind(w, "captureCancel"))
+    }
+
+    // ---- review window for text captured from other applications ---------------
+
+    readonly property var selectionComponent:
+        Qt.createComponent(Qt.resolvedUrl("../../scripts/main/SelectionCaptureWindow.qml"))
+
+    function makeSelection(result) {
+        const w = createTemporaryObject(selectionComponent, null, { taskModel: fixture.model })
+        verify(w !== null, selectionComponent.errorString())
+        w.present(result)
+        tryCompare(w, "visible", true)
+        waitForRendering(w.contentItem)
+        return w
+    }
+
+    function test_selectionCaptureNeedsConfirmationAndStoresTheSource() {
+        const w = makeSelection({ status: "ok", text: "Quarterly figures\nsecond line",
+                                  source: "Report.pdf - Reader (reader.exe)", message: "", truncated: false })
+        // reviewing creates nothing
+        compare(storedTitles(), [])
+        compare(cfind(w, "selectionTitle").text, "Quarterly figures")
+        compare(cfind(w, "selectionText").text, "Quarterly figures\nsecond line")
+        verify(cfind(w, "selectionSource").text.indexOf("reader.exe") >= 0)
+        cfind(w, "selectionTitle").text = "Edited title"
+        mouseClick(cfind(w, "selectionCapture"))
+        tryCompare(w, "visible", false)
+        compare(storedTitles(), ["Edited title"])
+        const task = fixture.stored()[0]
+        compare(fixture.model.taskData(task.id).notes,
+                "Quarterly figures\nsecond line\n\nSource: Report.pdf - Reader (reader.exe)")
+        // a late second activation does not add again
+        w.submit()
+        compare(fixture.stored().length, 1)
+    }
+
+    function test_selectionCaptureCancelAndFailuresCreateNothing() {
+        let w = makeSelection({ status: "ok", text: "Do not keep", source: "Notes (notepad.exe)" })
+        mouseClick(cfind(w, "selectionCancel"))
+        tryCompare(w, "visible", false)
+        compare(storedTitles(), [])
+
+        // an application that shares nothing: explained, empty, and refuses to save
+        w = makeSelection({ status: "unsupported", text: "", source: "Game (game.exe)",
+                            message: "This application does not share what is selected." })
+        verify(cfind(w, "captureNotice").visible)
+        verify(cfind(w, "captureNotice").text.indexOf("Paste") >= 0)
+        compare(cfind(w, "selectionText").text, "")
+        mouseClick(cfind(w, "selectionCapture"))
+        compare(w.visible, true)
+        verify(cfind(w, "selectionError").visible)
+        compare(storedTitles(), [])
+        mouseClick(cfind(w, "selectionCancel"))
+        compare(storedTitles(), [])
+
+        // a password field result carries no text at all
+        w = makeSelection({ status: "password", text: "", source: "Login (app.exe)",
+                            message: "A password field is focused; nothing was read." })
+        compare(cfind(w, "selectionText").text, "")
+        verify(cfind(w, "captureNotice").text.indexOf("password") >= 0)
+        mouseClick(cfind(w, "selectionCancel"))
+        compare(storedTitles(), [])
+    }
+
+    function test_selectionCaptureRefusesOverlongText() {
+        const w = makeSelection({ status: "ok", text: "x".repeat(10001), source: "" })
+        mouseClick(cfind(w, "selectionCapture"))
+        compare(w.visible, true)
+        verify(cfind(w, "selectionError").visible)
+        compare(storedTitles(), [])
+        mouseClick(cfind(w, "selectionCancel"))
+    }
+
+    // ---- Reduce motion --------------------------------------------------------
+
+    // Lets the main view see the (fixture's) widget controller, which owns the
+    // persisted preference.
+    function useController() {
+        view.widgetController = fixture.widget
+    }
+
+    function test_reduceMotionIsOffByDefault() {
+        useController()
+        compare(fixture.widget.reduceMotion, false)
+        compare(Theme.userReducedMotion, false)
+        compare(Theme.motionOff, false)
+        verify(Theme.durationBase > 0)
+        verify(Theme.durationPulse > 0)
+        verify(Theme.enterOffset > 0)
+    }
+
+    function test_reduceMotionTakesEffectImmediatelyAndBackAgain() {
+        useController()
+        fixture.widget.reduceMotion = true
+        compare(Theme.userReducedMotion, true)
+        compare(Theme.durationFast, 0)
+        compare(Theme.durationBase, 0)
+        compare(Theme.durationSlow, 0)
+        compare(Theme.durationPulse, 0)
+        compare(Theme.enterOffset, 0)
+        compare(Theme.pressScale, 1.0)
+        fixture.widget.reduceMotion = false
+        compare(Theme.userReducedMotion, false)
+        verify(Theme.durationBase > 0)
+        verify(Theme.pressScale < 1.0)
+    }
+
+    // The transitions really run when motion is on (opacity leaves 1 right
+    // after a view switch / completion) and never run when it is off.
+    function test_viewSwitchAndCompletionAnimateOnlyWithMotionOn() {
+        useController()
+        seed("Animated A")
+        seed("Animated B", "", dayAt(0, 18))
+        fixture.widget.reduceMotion = false
+        const list = find("taskList")
+        let sawFade = false
+        clickNav("today")
+        for (let i = 0; i < 40 && !sawFade; ++i) {
+            if (list.opacity < 1)
+                sawFade = true
+            else
+                wait(5)
+        }
+        verify(sawFade, "view switch fades the list in when motion is on")
+        tryCompare(list, "opacity", 1)
+
+        clickNav("all")
+        tryCompare(list, "opacity", 1)
+        const burst = find("completionBurst", row(0))
+        verify(burst !== null)
+        mouseClick(find("taskCheck", row(0)))
+        let sawBurst = false
+        for (let i = 0; i < 40 && !sawBurst; ++i) {
+            if (burst.opacity > 0)
+                sawBurst = true
+            else
+                wait(5)
+        }
+        verify(sawBurst, "completion ring burst runs when motion is on")
+
+        // Motion off: the same actions never leave the final state.
+        fixture.widget.reduceMotion = true
+        clickNav("today")
+        for (let i = 0; i < 10; ++i) {
+            compare(list.opacity, 1)
+            wait(5)
+        }
+        clickNav("all")
+        const burst2 = find("completionBurst", row(1))
+        mouseClick(find("taskCheck", row(1)))
+        for (let i = 0; i < 10; ++i) {
+            compare(burst2.opacity, 0)
+            wait(5)
+        }
+        fixture.widget.reduceMotion = false
+    }
+
+    function test_reduceMotionSwitchInSettingsTogglesThePreference() {
+        useController()
+        openCleanup()
+        const sw = find("reduceMotionSwitch")
+        verify(sw !== null)
+        compare(sw.checked, false)
+        mouseClick(sw)
+        compare(fixture.widget.reduceMotion, true)
+        compare(sw.checked, true)
+        compare(Theme.durationBase, 0)
+        mouseClick(sw)
+        compare(fixture.widget.reduceMotion, false)
+        verify(Theme.durationBase > 0)
+        closeCleanup()
+    }
+
+    function test_essentialActionsWorkWithAndWithoutReducedMotion() {
+        useController()
+        const modes = [false, true]
+        for (let m = 0; m < modes.length; ++m) {
+            fixture.widget.reduceMotion = modes[m]
+            verify(fixture.reset())
+            fixture.widget.reduceMotion = modes[m]
+            useController()
+            addViaUi("Task in mode " + m)
+            compare(rowCount(), 1)
+            mouseClick(find("taskCheck", row(0)))
+            tryCompare(fixture.stored()[0], "completed", true)
+            // switching views never leaves the list hidden or empty-looking
+            clickNav("today")
+            clickNav("all")
+            tryCompare(find("taskList"), "opacity", 1)
+            compare(rowCount(), 1)
+            // keyboard completion still works immediately
+            row(0).forceActiveFocus()
+            keyClick(Qt.Key_Space)
+            tryCompare(fixture.stored()[0], "completed", false)
+        }
+        fixture.widget.reduceMotion = false
+    }
+
     // ---- completed-task cleanup ---------------------------------------------
 
     function openCleanup() {
@@ -1111,8 +1472,9 @@ TestCase {
         find("settingsButton").forceActiveFocus()
         verify(find("settingsButton").activeFocus)
         keyClick(Qt.Key_Space)
-        tryCompare(view.cleanupSettings.settingsDialog, "opened", true)
-        verify(find("cleanupModeBox").activeFocus) // first control is focused
+        tryVerify(function () { return view.cleanupSettings.settingsDialog.opened }, 5000,
+                  diag("settings dialog did not open"))
+        verify(find("cleanupModeBox").activeFocus, diag("cleanup dialog: first control is focused")) // first control is focused
         keyClick(Qt.Key_Escape)
         tryCompare(view.cleanupSettings.settingsDialog, "visible", false)
     }
@@ -1266,6 +1628,26 @@ TestCase {
         mouseClick(find("editorCancel"))
     }
 
+    // Waits (bounded, polling the real condition) for the calendar popup to
+    // close; on failure reports the popup and focus state at that moment.
+    function awaitCalendarClosed(field, key) {
+        const popup = field.calendarPopup
+        for (let i = 0; i < 50 && popup.visible; ++i)
+            wait(100)
+        if (popup.visible) {
+            // Key events need OS activation; losing it mid-test is the
+            // environment (another application took the foreground), not a
+            // defect in the calendar. Report that as a visible skip.
+            if (!tc.Window.window.active)
+                skip(diag("blocked: the test window lost OS activation before " + key))
+            const cal = popup.contentItem.item
+            fail(diag(key + " did not close the calendar; field=" + field.text
+                      + " opened=" + popup.opened + " calendarFocus="
+                      + (cal ? cal.activeFocus : "n/a")
+                      + " losses=" + tc.activationLosses))
+        }
+    }
+
     function test_calendarWorksFromTheKeyboard() {
         seed("cal")
         openEditor()
@@ -1275,17 +1657,22 @@ TestCase {
 
         keyClick(Qt.Key_Down, Qt.AltModifier)
         tryCompare(field.calendarPopup, "opened", true)
+        // keys only reach the calendar once it really holds focus; assert that
+        // (with window state) instead of racing the popup's focus hand-over
+        const cal = field.calendarPopup.contentItem.item
+        tryVerify(function () { return cal.activeFocus }, 2000,
+                  diag("the calendar did not take keyboard focus"))
         keyClick(Qt.Key_PageDown)         // month end is kept inside the month
         keyClick(Qt.Key_Left)
         keyClick(Qt.Key_Return)
-        tryCompare(field.calendarPopup, "visible", false)
+        awaitCalendarClosed(field, "Return")
         compare(field.text, "2031-02-27")
         verify(field.activeFocus)         // focus returns to the field
 
         keyClick(Qt.Key_F4)
         tryCompare(field.calendarPopup, "opened", true)
         keyClick(Qt.Key_Escape)
-        tryCompare(field.calendarPopup, "visible", false)
+        awaitCalendarClosed(field, "Escape")
         compare(field.text, "2031-02-27")
         mouseClick(find("editorCancel"))
     }

@@ -58,31 +58,40 @@ ItemDelegate {
         onTriggered: row.tick++
     }
 
-    background: Rectangle {
-        radius: Theme.radiusSm
-        color: row.down ? Theme.surfaceRaised : (row.engaged ? Theme.surfaceHover : "transparent")
-        Behavior on color { ColorAnimation { duration: Theme.durationFast } }
+    // Layered surface: each row sits slightly above the workspace; hover and
+    // focus raise it, and a top-edge highlight gives it a lit edge. No borders
+    // or separators, so the list reads as a stack of planes.
+    background: Item {
+        Rectangle {
+            anchors.fill: parent
+            anchors.topMargin: 2
+            anchors.bottomMargin: 2
+            radius: Theme.radiusMd
+            color: row.down ? Theme.layerHigh
+                   : row.engaged ? Theme.layerMid : Theme.layerLow
+            Behavior on color { ColorAnimation { duration: Theme.durationFast } }
 
-        // keyboard focus: accent bar on the leading edge
-        Rectangle {
-            visible: row.visualFocus
-            width: 3
-            height: parent.height - 16
-            radius: 2
-            x: 0
-            anchors.verticalCenter: parent.verticalCenter
-            color: Theme.focus
-        }
-        // hairline separator instead of a card per task
-        Rectangle {
-            visible: !row.engaged
-            height: 1
-            color: Theme.border
-            anchors.left: parent.left
-            anchors.leftMargin: 44
-            anchors.right: parent.right
-            anchors.rightMargin: Theme.s2
-            anchors.bottom: parent.bottom
+            // lit top edge
+            Rectangle {
+                height: 1
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: Theme.radiusMd
+                anchors.rightMargin: Theme.radiusMd
+                color: row.engaged ? Theme.highlightStrong : Theme.highlight
+                Behavior on color { ColorAnimation { duration: Theme.durationFast } }
+            }
+            // keyboard focus: accent bar on the leading edge
+            Rectangle {
+                visible: row.visualFocus
+                width: 3
+                height: parent.height - 16
+                radius: 2
+                x: 0
+                anchors.verticalCenter: parent.verticalCenter
+                color: Theme.focus
+            }
         }
     }
 

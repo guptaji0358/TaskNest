@@ -1,0 +1,66 @@
+# Self-test for RunQtTest.cmake, using tst_fakeqt (tests/tst_fakeqt.cpp) as a fake
+# "test executable": it copies a prepared log to the -o path and exits with a
+# chosen code.
+#
+# Inputs: -DWRAPPER=<RunQtTest.cmake> -DFAKE=<tst_fakeqt> -DWORK_DIR=<scratch folder>
+file(REMOVE_RECURSE "${WORK_DIR}")
+file(MAKE_DIRECTORY "${WORK_DIR}")
+set(fake "${FAKE}")
+
+set(failures 0)
+
+# run_case(<label> <log content or NONE> <exit code> <skip budget> <expected result: PASS|FAIL> <message substring>)
+function(run_case label content exit_code budget expected substring)
+    set(log "${WORK_DIR}/${label}.log")
+    file(REMOVE "${log}")
+    if(content STREQUAL "NONE")
+        unset(ENV{FAKE_CONTENT})
+    else()
+        file(WRITE "${WORK_DIR}/${label}.content" "${content}")
+        set(ENV{FAKE_CONTENT} "${WORK_DIR}/${label}.content")
+    endif()
+    set(ENV{FAKE_EXIT} "${exit_code}")
+    execute_process(COMMAND "${CMAKE_COMMAND}" "-DEXE=${fake}" "-DNAME=${label}" "-DLOG=${log}"
+                            "-DSKIP_BUDGET=${budget}" -P "${WRAPPER}"
+                    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+    set(all "${out}${err}")
+    set(ok TRUE)
+    if(expected STREQUAL "PASS" AND NOT rc EQUAL 0)
+        set(ok FALSE)
+    elseif(expected STREQUAL "FAIL" AND rc EQUAL 0)
+        set(ok FALSE)
+    endif()
+    if(NOT substring STREQUAL "" AND NOT all MATCHES "${substring}")
+        set(ok FALSE)
+    endif()
+    if(ok)
+        message(STATUS "ok   ${label} (expected ${expected})")
+    else()
+        message(STATUS "FAIL ${label}: expected ${expected} containing '${substring}', got rc=${rc}:\n${all}")
+        math(EXPR n "${failures} + 1")
+        set(failures ${n} PARENT_SCOPE)
+    endif()
+endfunction()
+
+set(pass_log "PASS   : T::a()\nPASS   : T::b()\nTotals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 10ms\n")
+set(skip_log "PASS   : T::a()\nSKIP   : T::b() window could not be activated\nTotals: 4 passed, 0 failed, 1 skipped, 0 blacklisted, 10ms\n")
+set(skip3_log "SKIP   : T::a()\nSKIP   : T::b()\nSKIP   : T::c()\nTotals: 2 passed, 0 failed, 3 skipped, 0 blacklisted, 10ms\n")
+set(fail_log "FAIL!  : T::a() boom\nTotals: 3 passed, 1 failed, 0 skipped, 0 blacklisted, 10ms\n")
+
+run_case(all_pass      "${pass_log}"  0 0  PASS "5 passed, 0 failed, 0 skipped")
+run_case(skip_budget0  "${skip_log}"  0 0  FAIL "INCOMPLETE")
+run_case(skip_listed   "${skip_log}"  0 0  FAIL "SKIP   : T::b")
+run_case(skip_budget1  "${skip_log}"  0 1  PASS "1 skipped \\(skip budget 1\\)")
+run_case(skip_over     "${skip3_log}" 0 1  FAIL "INCOMPLETE")
+run_case(fail_big_budget "${fail_log}" 1 99 FAIL "1 test\\(s\\) failed")
+run_case(fail_budget0  "${fail_log}"  1 0  FAIL "failed")
+run_case(truncated     "PASS   : T::a()\nPASS   : T::b()\n" 0 99 FAIL "did not finish")
+run_case(empty_log     ""             0 99 FAIL "did not finish")
+run_case(missing_log   NONE           0 99 FAIL "no log was written")
+run_case(zero_tests    "Totals: 0 passed, 0 failed, 0 skipped, 0 blacklisted, 0ms\n" 0 99 FAIL "no tests ran")
+run_case(crash_code    "${pass_log}"  3 99 FAIL "failed")
+
+if(failures GREATER 0)
+    message(FATAL_ERROR "RunQtTest.cmake self-test: ${failures} case(s) did not behave as documented.")
+endif()
+message(STATUS "RunQtTest.cmake self-test: all cases behaved as documented.")

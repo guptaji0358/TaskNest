@@ -13,8 +13,20 @@ QtObject {
     // ---- motion ---------------------------------------------------------
     // Set from main.cpp when Windows "animation effects" are turned off.
     property bool reducedMotion: false
-    readonly property int durationFast: reducedMotion ? 0 : 110
-    readonly property int durationBase: reducedMotion ? 0 : 170
+    // The user's own "Reduce motion" choice (Settings); either source turns
+    // nonessential transitions off. Essential feedback (focus, press) uses
+    // durationFast, which becomes immediate with the same switch.
+    property bool userReducedMotion: false
+    readonly property bool motionOff: reducedMotion || userReducedMotion
+    readonly property int durationFast: motionOff ? 0 : 110
+    readonly property int durationBase: motionOff ? 0 : 170
+    readonly property int durationSlow: motionOff ? 0 : 320   // panels, atmosphere
+    readonly property int easeOut: Easing.OutCubic            // arrivals
+    readonly property int easeInOut: Easing.InOutCubic        // moves between states
+    readonly property int easeSpring: Easing.OutBack          // small emphasis only
+    readonly property int durationPulse: motionOff ? 0 : 260  // completion burst
+    readonly property int enterOffset: motionOff ? 0 : 10     // px a panel slides in from
+    readonly property real pressScale: motionOff ? 1.0 : 0.98 // pressed buttons
 
     // ---- surfaces -------------------------------------------------------
     readonly property color bg: "#0E1014"            // window
@@ -26,6 +38,19 @@ QtObject {
     readonly property color scrim: "#B8080A0E"       // behind modal dialogs
     readonly property color border: "#2B313C"
     readonly property color borderStrong: "#3D4555"
+
+    // ---- depth: layered light, not borders ------------------------------
+    // Surfaces rise by adding white at low alpha; a 1px highlight on the top
+    // edge reads as light from above, the shadow sits below.
+    readonly property color layerLow: Qt.rgba(1, 1, 1, 0.028)    // resting row
+    readonly property color layerMid: Qt.rgba(1, 1, 1, 0.055)    // hovered / focused
+    readonly property color layerHigh: Qt.rgba(1, 1, 1, 0.085)   // pressed / selected
+    readonly property color highlight: Qt.rgba(1, 1, 1, 0.09)    // top-edge light
+    readonly property color highlightStrong: Qt.rgba(1, 1, 1, 0.16)
+    readonly property color shadow: Qt.rgba(0, 0, 0, 0.45)
+    readonly property color glowAccent: Qt.rgba(0.722, 0.949, 0.235, 0.085)
+    readonly property color glowSecondary: Qt.rgba(0.64, 0.59, 1.0, 0.10)
+    readonly property color sidebarTop: "#181C26"                // lit edge of the rail
 
     // ---- text -----------------------------------------------------------
     readonly property color text: "#E8EAF0"          // primary (not pure white)

@@ -121,11 +121,7 @@ TNTextField {
         margins: Theme.s2
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
-        background: Rectangle {
-            radius: Theme.radiusMd
-            color: Theme.elevated
-            border.color: Theme.borderStrong
-        }
+        background: TNPopupSurface {}
         onClosed: control.touched = true
 
         contentItem: Loader {

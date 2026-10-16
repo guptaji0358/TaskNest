@@ -26,6 +26,30 @@ Rectangle {
 
     Behavior on opacity { NumberAnimation { duration: Theme.durationFast } }
 
+    // Arrival: rises into place. Dismissal stays immediate so the next action
+    // is never blocked by an exit animation.
+    transform: Translate { id: rise }
+    NumberAnimation {
+        id: riseAnim
+        target: rise
+        property: "y"
+        from: Theme.enterOffset * 1.6
+        to: 0
+        duration: Theme.durationBase
+        easing.type: Theme.easeOut
+    }
+
+    Rectangle {
+        height: 1
+        anchors.top: parent.top
+        anchors.topMargin: 1
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: Theme.radiusMd
+        anchors.rightMargin: Theme.radiusMd
+        color: Theme.highlightStrong
+    }
+
     function show(text, action, ms, icon) {
         message = text
         actionText = action || ""
@@ -34,6 +58,7 @@ Rectangle {
             duration = ms
         visible = true
         opacity = 1
+        riseAnim.restart()
         timer.restart()
     }
 

@@ -14,6 +14,9 @@ Item {
     property var reminderScheduler: null // ReminderScheduler, optional
     property var widgetController: null  // WidgetController, optional
     property var shortcutManager: null   // ShortcutManager, optional
+    property var integrationServer: null // IntegrationServer, optional
+    property var globalHotkey: null      // GlobalHotkey, optional
+    property var captureHotkey: null     // GlobalHotkey (capture selection), optional
 
     // Emitted when a reminder is announced (the window can flash the taskbar).
     signal reminderArrived()
@@ -102,8 +105,19 @@ Item {
     function selectNav(item) {
         errorText = ""
         addMessage = ""
-        if (taskModel.setView(item.scope, item.list, item.completion))
+        if (taskModel.setView(item.scope, item.list, item.completion)) {
+            const changed = navKey !== item.key
             navKey = item.key
+            if (changed)
+                viewEnter.restart()
+        }
+    }
+
+    // The user's own Reduce motion choice (persisted by the widget controller).
+    Binding {
+        target: Theme
+        property: "userReducedMotion"
+        value: root.widgetController ? root.widgetController.reduceMotion : false
     }
 
     // Focuses the add field, leaving a view that cannot take new tasks first.
@@ -196,6 +210,19 @@ Item {
     }
 
     // Opens a task in the editor (used by the floating widget).
+    // Shows one of the fixed views by its key (all, today, upcoming, completed, inbox).
+    function openView(key) {
+        if (!databaseOk)
+            return
+        const wanted = key === "inbox" ? "list:Inbox" : key
+        for (let i = 0; i < navItems.length; ++i) {
+            if (navItems[i].key === wanted && navItems[i].header !== true) {
+                selectNav(navItems[i])
+                return
+            }
+        }
+    }
+
     function openTask(taskId) {
         if (!databaseOk)
             return
@@ -485,7 +512,11 @@ Item {
             id: sidebar
             Layout.preferredWidth: root.railMode ? Theme.railWidth : Theme.sidebarWidth
             Layout.fillHeight: true
-            color: Theme.sidebar
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Theme.sidebarTop }
+                GradientStop { position: 0.35; color: Theme.sidebar }
+                GradientStop { position: 1.0; color: Theme.bg }
+            }
             Behavior on Layout.preferredWidth { NumberAnimation { duration: Theme.durationBase; easing.type: Easing.OutCubic } }
 
             ColumnLayout {
@@ -504,15 +535,17 @@ Item {
                         width: 34
                         height: 34
                         radius: 11
-                        color: Theme.accent
+                        color: "transparent"
                         anchors.verticalCenter: parent.verticalCenter
                         x: root.railMode ? (parent.width - width) / 2 : Theme.s2
-                        Icon {
-                            anchors.centerIn: parent
-                            name: "nest"
-                            size: 22
-                            strokeWidth: 2.2
-                            color: Theme.accentText
+                        // The application icon itself, so the sidebar and the
+                        // Windows icon are the same mark.
+                        Image {
+                            anchors.fill: parent
+                            source: "qrc:/icons/tasknest-256.png"
+                            sourceSize: Qt.size(68, 68)
+                            smooth: true
+                            mipmap: true
                         }
                     }
                     TNLabel {
@@ -663,6 +696,11 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             color: Theme.surface
+
+            Atmosphere {
+                anchors.fill: parent
+                objectName: "atmosphere"
+            }
 
             ColumnLayout {
                 id: contentColumn
@@ -893,6 +931,29 @@ Item {
                         keyNavigationEnabled: true
                         ScrollBar.vertical: TNScrollBar {}
 
+                        // View switch: the new list fades in and settles. Only
+                        // opacity and a translate change; the model is untouched.
+                        transform: Translate { id: viewShift }
+                        ParallelAnimation {
+                            id: viewEnter
+                            NumberAnimation { target: taskList; property: "opacity"; from: 0.25; to: 1
+                                              duration: Theme.durationBase; easing.type: Theme.easeOut }
+                            NumberAnimation { target: viewShift; property: "y"; from: Theme.enterOffset; to: 0
+                                              duration: Theme.durationBase; easing.type: Theme.easeOut }
+                        }
+
+                        // Rows that appear fade in; rows below a change glide to
+                        // their new place instead of jumping. With Reduce motion
+                        // the durations are 0, so nothing is deferred.
+                        add: Transition {
+                            NumberAnimation { property: "opacity"; from: 0; to: 1
+                                              duration: Theme.durationBase; easing.type: Theme.easeOut }
+                        }
+                        displaced: Transition {
+                            NumberAnimation { properties: "y"; duration: Theme.durationBase
+                                              easing.type: Theme.easeInOut }
+                        }
+
                         delegate: TaskRow {
                             // Full width, leaving room for the scrollbar only when it is shown.
                             width: taskList.width - Theme.s5
@@ -960,6 +1021,9 @@ Item {
         taskModel: root.taskModel
         widgetController: root.widgetController
         shortcutManager: root.shortcutManager
+        integrationServer: root.integrationServer
+        globalHotkey: root.globalHotkey
+        captureHotkey: root.captureHotkey
         onNotice: (text) => root.notify(text, "check")
     }
 

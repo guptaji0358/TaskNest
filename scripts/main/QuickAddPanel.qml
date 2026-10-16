@@ -23,6 +23,18 @@ Item {
                                        || notesField.text.trim() !== ""
 
     visible: expanded
+
+    // Reveal: the panel fades in and settles down a few pixels. The state
+    // (visible / height) changes at once; only decoration is animated.
+    transform: Translate { id: reveal }
+    onExpandedChanged: { if (expanded) revealAnim.restart() }
+    ParallelAnimation {
+        id: revealAnim
+        NumberAnimation { target: root; property: "opacity"; from: 0; to: 1
+                          duration: Theme.durationBase; easing.type: Theme.easeOut }
+        NumberAnimation { target: reveal; property: "y"; from: -Theme.enterOffset; to: 0
+                          duration: Theme.durationBase; easing.type: Theme.easeOut }
+    }
     implicitHeight: expanded ? column.implicitHeight : 0
     clip: true
 

@@ -76,6 +76,8 @@ public:
     void setSearchText(const QString &text);
     QStringList listNames() const { return m_listNames; }
     QString lastError() const { return m_lastError; }
+    // Id of the task created by the most recent successful addTask() (0 before any).
+    qint64 lastAddedId() const { return m_lastAddedId; }
     bool canUndo() const { return m_undo.has_value(); }
     QString undoTitle() const { return m_undo ? m_undo->title : QString(); }
 
@@ -180,4 +182,5 @@ private:
     CleanupPolicy m_cleanup;
     QStringList m_listNames;
     QString m_lastError;
+    qint64 m_lastAddedId = 0;
 };

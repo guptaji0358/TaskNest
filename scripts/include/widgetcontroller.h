@@ -48,6 +48,9 @@ class WidgetController : public QObject
     // only thing that decides startup visibility (the last session's state is
     // not restored).
     Q_PROPERTY(bool showOnLaunch READ showOnLaunch WRITE setShowOnLaunch NOTIFY preferencesChanged)
+    // Application-wide UI preference kept with the other UI preferences:
+    // shortens or removes nonessential transitions (Theme.userReducedMotion).
+    Q_PROPERTY(bool reduceMotion READ reduceMotion WRITE setReduceMotion NOTIFY preferencesChanged)
 
 public:
     static constexpr int kMinWidth = 220;
@@ -106,6 +109,7 @@ public:
     bool showReminders() const { return m_showReminders; }
     bool showDetails() const { return m_showDetails; }
     bool showOnLaunch() const { return m_showOnLaunch; }
+    bool reduceMotion() const { return m_reduceMotion; }
 
     void setWidgetVisible(bool visible);
     void setX(int x);
@@ -122,6 +126,7 @@ public:
     void setShowReminders(bool show);
     void setShowDetails(bool show);
     void setShowOnLaunch(bool show);
+    void setReduceMotion(bool reduce);
 
     // Restores every preference (not the position) to its default.
     Q_INVOKABLE void resetPreferences();
@@ -159,4 +164,5 @@ private:
     bool m_showReminders = true;
     bool m_showDetails = true;
     bool m_showOnLaunch = false;
+    bool m_reduceMotion = false;
 };

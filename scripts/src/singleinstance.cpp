@@ -1,5 +1,6 @@
 #include "singleinstance.h"
 
+#include <QByteArray>
 #include <QLockFile>
 
 #ifdef Q_OS_WIN
@@ -107,6 +108,39 @@ bool SingleInstanceGuard::activateWindowOfProcess(qint64 pid)
     return SetForegroundWindow(data.window) != 0;
 #else
     Q_UNUSED(pid);
+    return false;
+#endif
+}
+
+bool SingleInstanceGuard::sendDataToProcess(qint64 pid, quintptr id, const QByteArray &payload)
+{
+#ifdef Q_OS_WIN
+    if (pid <= 0)
+        return false;
+    FindWindowData data;
+    data.pid = static_cast<DWORD>(pid);
+    EnumWindows(findWindowOfProcess, reinterpret_cast<LPARAM>(&data));
+    if (!data.window)
+        return false;
+    // This process was just started by the user (a clicked link), so it may
+    // pass the right to take the foreground on to the running instance;
+    // otherwise Windows would only flash that instance's taskbar button.
+    AllowSetForegroundWindow(static_cast<DWORD>(pid));
+    COPYDATASTRUCT cds;
+    cds.dwData = static_cast<ULONG_PTR>(id);
+    cds.cbData = static_cast<DWORD>(payload.size());
+    cds.lpData = const_cast<char *>(payload.constData());
+    DWORD_PTR answer = 0;
+    // The receiver copies the payload before it returns; a hung receiver is
+    // given up on after three seconds rather than blocking this process.
+    const LRESULT sent = SendMessageTimeoutW(data.window, WM_COPYDATA, 0,
+                                             reinterpret_cast<LPARAM>(&cds),
+                                             SMTO_ABORTIFHUNG | SMTO_BLOCK, 3000, &answer);
+    return sent != 0 && answer != 0;
+#else
+    Q_UNUSED(pid);
+    Q_UNUSED(id);
+    Q_UNUSED(payload);
     return false;
 #endif
 }

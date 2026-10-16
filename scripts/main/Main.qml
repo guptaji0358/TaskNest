@@ -11,6 +11,11 @@ ApplicationWindow {
     property var reminderScheduler: null
     property var widgetController: null // WidgetController; null when the database is unavailable
     property var shortcutManager: null // ShortcutManager
+    property var integrationServer: null // IntegrationServer; null when the database is unavailable
+    property var deepLinkRouter: null    // DeepLinkRouter
+    property var globalHotkey: null      // GlobalHotkey; null when the database is unavailable
+    property var captureHotkey: null     // GlobalHotkey for "capture selection"
+    property var selectionCapture: null  // SelectionCapture
     property bool reducedMotion: false // Windows "animation effects" off
 
     width: 1040
@@ -39,6 +44,59 @@ ApplicationWindow {
         requestActivate()
     }
 
+    // Requests from the local integration endpoint. They raise the main window
+    // only; the floating widget is never opened by them.
+    Connections {
+        target: root.integrationServer
+        ignoreUnknownSignals: true
+        function onOpenViewRequested(view) { root.bringToFront(); mainView.openView(view) }
+        function onOpenTaskRequested(taskId) { root.bringToFront(); mainView.openTask(taskId) }
+        function onQuickAddRequested() { root.bringToFront(); mainView.openQuickAdd() }
+    }
+
+    // tasknest:// links. Views and tasks raise the main window; Quick Add uses
+    // the compact capture window and leaves the main window alone.
+    Connections {
+        target: root.deepLinkRouter
+        ignoreUnknownSignals: true
+        function onOpenViewRequested(view) { root.bringToFront(); mainView.openView(view) }
+        function onOpenTaskRequested(taskId) { root.bringToFront(); mainView.openTask(taskId) }
+        function onQuickAddRequested() { if (capture.item) capture.item.present() }
+        function onRejected(reason) { mainView.notify("That TaskNest link can't be opened.", "warning") }
+    }
+
+    // The global shortcut: compact window only.
+    Connections {
+        target: root.globalHotkey
+        ignoreUnknownSignals: true
+        function onActivated() { if (capture.item) capture.item.present() }
+    }
+
+    // Text read from another application after the capture shortcut: shown in
+    // its own review window; nothing is stored until the user confirms.
+    Connections {
+        target: root.selectionCapture
+        ignoreUnknownSignals: true
+        function onFinished(result) { if (selectionWindow.item) selectionWindow.item.present(result) }
+    }
+    Loader {
+        id: selectionWindow
+        active: root.taskModel !== null
+        sourceComponent: SelectionCaptureWindow {
+            taskModel: root.taskModel
+            hotkey: root.captureHotkey
+        }
+    }
+
+    Loader {
+        id: capture
+        active: root.taskModel !== null
+        sourceComponent: QuickCaptureWindow {
+            taskModel: root.taskModel
+            hotkey: root.globalHotkey
+        }
+    }
+
     // Created only when there is a usable database (and so a controller).
     Loader {
         id: widgetLoader
@@ -61,6 +119,9 @@ ApplicationWindow {
         id: mainView
         widgetController: root.widgetController
         shortcutManager: root.shortcutManager
+        integrationServer: root.integrationServer
+        globalHotkey: root.globalHotkey
+        captureHotkey: root.captureHotkey
         anchors.fill: parent
         databaseError: root.databaseError
         databasePath: root.databasePath

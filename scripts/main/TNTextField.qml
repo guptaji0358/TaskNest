@@ -41,6 +41,18 @@ TextField {
         opacity: control.enabled ? 1 : 0.55
         Behavior on border.color { ColorAnimation { duration: Theme.durationFast } }
 
+        Rectangle {
+            height: 1
+            anchors.top: parent.top
+            anchors.topMargin: 1
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: Theme.radiusMd
+            anchors.rightMargin: Theme.radiusMd
+            color: Theme.highlight
+            visible: !control.activeFocus
+        }
+
         Icon {
             visible: control.iconName !== ""
             name: control.iconName

@@ -1,6 +1,7 @@
 module TaskNest
 singleton Theme 1.0 Theme.qml
 Icon 1.0 Icon.qml
+Atmosphere 1.0 Atmosphere.qml
 TNLabel 1.0 TNLabel.qml
 TNButton 1.0 TNButton.qml
 TNIconButton 1.0 TNIconButton.qml
@@ -11,6 +12,7 @@ TNSpinBox 1.0 TNSpinBox.qml
 TNCalendar 1.0 TNCalendar.qml
 TNDateField 1.0 TNDateField.qml
 TNTimeField 1.0 TNTimeField.qml
+TNPopupSurface 1.0 TNPopupSurface.qml
 TNDialog 1.0 TNDialog.qml
 TNToast 1.0 TNToast.qml
 QuickAddPanel 1.0 QuickAddPanel.qml
@@ -21,5 +23,7 @@ ReminderBanner 1.0 ReminderBanner.qml
 EmptyState 1.0 EmptyState.qml
 TaskEditor 1.0 TaskEditor.qml
 CleanupSettings 1.0 CleanupSettings.qml
+QuickCaptureWindow 1.0 QuickCaptureWindow.qml
+SelectionCaptureWindow 1.0 SelectionCaptureWindow.qml
 FloatingWidget 1.0 FloatingWidget.qml
 MainView 1.0 MainView.qml

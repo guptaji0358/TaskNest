@@ -31,6 +31,36 @@ CheckBox {
             Behavior on border.color { ColorAnimation { duration: Theme.durationFast } }
         }
 
+        // Completion burst: a ring that expands and fades once. Not a loop;
+        // it only runs when the box becomes checked.
+        Rectangle {
+            id: burst
+            objectName: "completionBurst"
+            anchors.centerIn: parent
+            width: parent.width
+            height: width
+            radius: width / 2
+            color: "transparent"
+            border.width: 2
+            border.color: Theme.accent
+            opacity: 0
+            scale: 1
+        }
+        ParallelAnimation {
+            id: burstAnim
+            NumberAnimation { target: burst; property: "scale"; from: 1; to: 1.9
+                              duration: Theme.durationPulse; easing.type: Theme.easeOut }
+            NumberAnimation { target: burst; property: "opacity"; from: 0.7; to: 0
+                              duration: Theme.durationPulse; easing.type: Theme.easeOut }
+        }
+        Connections {
+            target: control
+            function onCheckedChanged() {
+                if (control.checked && Theme.durationPulse > 0)
+                    burstAnim.restart()
+            }
+        }
+
         Icon {
             anchors.centerIn: parent
             name: "check"

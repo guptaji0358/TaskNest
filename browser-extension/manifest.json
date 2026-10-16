@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "TaskNest Capture",
+  "version": "0.1.0",
+  "description": "Send selected text and its page address to your local TaskNest app. Nothing leaves your computer.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAusnswmRTYf3WFGQjs6NfBdDLvBl49LlPb9m0UBdihLzvqwFHjsLjYoBsKa0URlpuzuMGsSld5NVFnJ66RL7jobu8OuULkA6XBPTeZZ2UR6HEcp5FSCKBrWVSrXP8MdhVUzGTiYXtBztuGSsELH0LUoKzswlCNJwJYcsYVdTSThYWsdiJYbFun0s6fgK0fiAepE2L/+V2O8/vgnaoNT9JKrEIzi/sZ2QJ0vX7/MaYrX9nCia+/zYNcJ7yY3qPrMMesoYscBq06bzpkr8cpLEz54Oool6Gc/BiRvH+ciRB20HLmE7L9lxoO28aJKSz8W80b02Nycy6l+KWmZQ4fZCcqwIDAQAB",
+  "minimum_chrome_version": "110",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Capture selection to TaskNest",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "contextMenus",
+    "nativeMessaging"
+  ]
+}

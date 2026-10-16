@@ -24,8 +24,8 @@ AbstractButton {
     background: Rectangle {
         radius: Theme.radiusSm
         color: control.active ? Theme.accentSoft
-               : control.down ? Theme.surfaceRaised
-               : control.hovered ? Theme.surfaceHover : "transparent"
+               : control.down ? Theme.layerHigh
+               : control.hovered ? Theme.layerMid : "transparent"
         border.width: control.visualFocus ? 2 : 0
         border.color: Theme.focus
         Behavior on color { ColorAnimation { duration: Theme.durationFast } }
@@ -38,7 +38,7 @@ AbstractButton {
             anchors.verticalCenter: parent.verticalCenter
             color: Theme.accent
             opacity: control.active ? 1 : 0
-            Behavior on height { NumberAnimation { duration: Theme.durationBase; easing.type: Easing.OutCubic } }
+            Behavior on height { NumberAnimation { duration: Theme.durationBase; easing.type: Theme.easeOut } }
             Behavior on opacity { NumberAnimation { duration: Theme.durationFast } }
         }
     }

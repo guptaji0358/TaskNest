@@ -83,13 +83,47 @@ TNDialog {
             errorText = taskModel.lastError // dialog stays open; nothing was saved
     }
 
+    // Short windows: the notes box gets smaller (it scrolls itself) before
+    // anything else, so more of the form is visible without shrinking controls.
+    readonly property bool shortWindow: parent ? parent.height < 640 : false
+    readonly property bool overflowing: scroller.contentHeight > scroller.height + 1
+
+    // Keeps the focused field visible when the form scrolls (Tab through a
+    // short window reaches Reminder without the mouse).
+    Connections {
+        target: scroller.Window.window
+        enabled: editor.visible
+        function onActiveFocusItemChanged() {
+            const item = scroller.Window.window ? scroller.Window.window.activeFocusItem : null
+            const flick = scroller.contentItem
+            if (!item || !flick || flick.contentY === undefined)
+                return
+            let p = item
+            while (p && p !== form)
+                p = p.parent
+            if (!p)
+                return // focus is outside the form (footer buttons)
+            const top = item.mapToItem(form, 0, 0).y
+            const bottom = top + item.height
+            const margin = Theme.s2
+            if (top - margin < flick.contentY)
+                flick.contentY = Math.max(0, top - margin)
+            else if (bottom + margin > flick.contentY + flick.height)
+                flick.contentY = Math.min(flick.contentHeight - flick.height, bottom + margin - flick.height)
+        }
+    }
+
     contentItem: ScrollView {
         id: scroller
         objectName: "editorScroll"
         contentWidth: availableWidth
         clip: true
         implicitHeight: form.implicitHeight
-        ScrollBar.vertical: TNScrollBar {}
+        ScrollBar.vertical: TNScrollBar {
+            // always shown while the form is taller than the window, so a
+            // hidden Reminder section is never a surprise
+            policy: editor.overflowing ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
+        }
 
         ColumnLayout {
             id: form
@@ -112,7 +146,7 @@ TNDialog {
                 TNLabel { role: "overline"; text: "Notes" }
                 Rectangle {
                     Layout.fillWidth: true
-                    implicitHeight: 84
+                    implicitHeight: editor.shortWindow ? 56 : 84
                     radius: Theme.radiusMd
                     color: Theme.surfaceRaised
                     border.width: notesArea.activeFocus ? 2 : 1
@@ -135,6 +169,11 @@ TNDialog {
                             selectedTextColor: Theme.accentText
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontBody
+                            // Tab moves between fields (it must not insert a tab
+                            // character into the notes).
+                            KeyNavigation.priority: KeyNavigation.BeforeItem
+                            KeyNavigation.tab: priorityBox
+                            KeyNavigation.backtab: titleField
                             // Enter keeps typing multi-line notes; Ctrl+Enter saves.
                             Keys.onPressed: (event) => {
                                 if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
@@ -292,6 +331,18 @@ TNDialog {
 
     footer: Item {
         implicitHeight: 68
+
+        // Separates the always-visible actions from the scrolling form; a
+        // lime-free hairline, brighter while the form has more below.
+        Rectangle {
+            height: 1
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: Theme.s5
+            anchors.rightMargin: Theme.s5
+            color: editor.overflowing ? Theme.borderStrong : Theme.border
+        }
 
         Row {
             anchors.right: parent.right

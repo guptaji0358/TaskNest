@@ -1,5 +1,8 @@
 #include "shortcutmanager.h"
 
+#include "deeplink.h"
+#include "nativehost.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -75,9 +78,67 @@ bool ShortcutManager::taskbarPinned() const
     return false;
 }
 
+bool ShortcutManager::linksRegistered() const
+{
+    if (m_profile.active)
+        return false; // never reads or writes the real scheme registration
+    return UrlSchemeRegistration().isRegistered(QCoreApplication::applicationFilePath());
+}
+
+static QString hostExecutablePath()
+{
+    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("TaskNestHost.exe"));
+}
+
+bool ShortcutManager::browserHostRegistered() const
+{
+    if (m_profile.active)
+        return NativeHostRegistration::forProfile(m_profile).isRegistered(hostExecutablePath());
+    return NativeHostRegistration().isRegistered(hostExecutablePath());
+}
+
+bool ShortcutManager::setBrowserHostRegistered(bool enabled)
+{
+    m_error.clear();
+    NativeHostRegistration registration = m_profile.active
+                                              ? NativeHostRegistration::forProfile(m_profile)
+                                              : NativeHostRegistration();
+    QString why;
+    const bool ok = enabled ? registration.registerHost(hostExecutablePath(), &why,
+                                                        NativeHostRegistration::runtimeDirectories(hostExecutablePath()))
+                            : registration.unregisterHost(&why);
+    if (!ok)
+        m_error = why;
+    emit changed();
+    return ok;
+}
+
+bool ShortcutManager::setLinksRegistered(bool enabled)
+{
+    m_error.clear();
+    if (m_profile.active) {
+        m_error = tr("Links are not available in a test profile.");
+        emit changed();
+        return false;
+    }
+    UrlSchemeRegistration registration;
+    QString why;
+    const bool ok = enabled ? registration.registerScheme(QCoreApplication::applicationFilePath(), &why)
+                            : registration.unregisterScheme(&why);
+    if (!ok)
+        m_error = why;
+    emit changed();
+    return ok;
+}
+
 bool ShortcutManager::setStartMenuShortcut(bool enabled)
 {
     m_error.clear();
+    if (m_profile.active) {
+        m_error = tr("Shortcuts are not available in a test profile.");
+        emit changed();
+        return false;
+    }
     const QString path = startMenuShortcutPath();
     if (!supported() || path.isEmpty()) {
         m_error = tr("Start Menu shortcuts are not available here.");

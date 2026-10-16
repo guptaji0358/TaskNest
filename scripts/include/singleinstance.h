@@ -37,6 +37,10 @@ public:
     // Windows: restores and focuses the visible top-level window of `pid`.
     // Returns false if there is none (or on other platforms).
     static bool activateWindowOfProcess(qint64 pid);
+    // Windows: hands `data` to the main window of `pid` as a WM_COPYDATA
+    // message tagged with `id` (used to forward a tasknest:// link to the
+    // running instance). False if there is no such window or it did not answer.
+    static bool sendDataToProcess(qint64 pid, quintptr id, const QByteArray &data);
 
 private:
     std::unique_ptr<QLockFile> m_lock;

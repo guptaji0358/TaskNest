@@ -57,6 +57,8 @@ public:
         m_widget.setWidgetVisible(false);
         m_widget.resetPreferences();
         m_widget.setCompact(false);
+        m_widget.setReduceMotion(false);
+        m_widget.setShowOnLaunch(false);
         if (!m_model.setCleanupPolicy(0, 0)) // "never automatically delete"
             return false;
         const bool ok = m_model.setView(TaskListModel::Everything, QString(), TaskListModel::All);

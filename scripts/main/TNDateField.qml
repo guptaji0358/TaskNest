@@ -107,11 +107,7 @@ TNTextField {
         margins: Theme.s2 // stays inside the window (flips/moves when there is no room)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
-        background: Rectangle {
-            radius: Theme.radiusMd
-            color: Theme.elevated
-            border.color: Theme.borderStrong
-        }
+        background: TNPopupSurface {}
 
         onClosed: control.touched = true
 

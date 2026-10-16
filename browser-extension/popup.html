@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>TaskNest Capture</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <h1>Capture to TaskNest</h1>
+
+    <p id="status" role="status" hidden></p>
+
+    <section id="form" hidden>
+      <label for="title">Task title</label>
+      <input id="title" type="text" maxlength="500" autocomplete="off" spellcheck="false">
+
+      <span class="label">Selected text</span>
+      <pre id="preview" aria-label="Selected text preview"></pre>
+      <p id="count" class="hint"></p>
+
+      <span class="label">Source</span>
+      <p id="page" class="source"></p>
+      <p id="url" class="source url"></p>
+
+      <div class="actions">
+        <button id="capture" type="button">Capture</button>
+      </div>
+    </section>
+
+    <p class="hint footer">Everything stays on this computer. TaskNest&rsquo;s local integration
+      API must be turned on in TaskNest Settings.</p>
+  </main>
+  <script src="capture-core.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

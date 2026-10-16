@@ -109,6 +109,7 @@ bool WidgetController::load()
     // Startup visibility comes only from "showOnLaunch"; the saved "visible"
     // (where the widget was when the app last closed) is not restored.
     m_showOnLaunch = boolOf("showOnLaunch", false);
+    m_reduceMotion = boolOf("reduceMotion", false);
     m_visible = m_showOnLaunch;
     m_hasPosition = o.value(QLatin1String("x")).isDouble() && o.value(QLatin1String("y")).isDouble();
     m_x = m_hasPosition ? intOf("x", 0) : 0;
@@ -138,6 +139,7 @@ bool WidgetController::flush()
     QJsonObject o;
     o.insert(QStringLiteral("visible"), m_visible);
     o.insert(QStringLiteral("showOnLaunch"), m_showOnLaunch);
+    o.insert(QStringLiteral("reduceMotion"), m_reduceMotion);
     if (m_hasPosition) {
         o.insert(QStringLiteral("x"), m_x);
         o.insert(QStringLiteral("y"), m_y);
@@ -284,6 +286,11 @@ void WidgetController::setHeight(int height)
 void WidgetController::setShowOnLaunch(bool show)
 {
     assign(m_showOnLaunch, show, &WidgetController::preferencesChanged);
+}
+
+void WidgetController::setReduceMotion(bool reduce)
+{
+    assign(m_reduceMotion, reduce, &WidgetController::preferencesChanged);
 }
 
 void WidgetController::setCompact(bool compact)

@@ -26,15 +26,38 @@ ComboBox {
         highlighted: control.highlightedIndex === index
         hoverEnabled: true
 
-        contentItem: TNLabel {
-            text: item.modelData
-            verticalAlignment: Text.AlignVCenter
-            color: item.index === control.currentIndex ? Theme.accent : Theme.text
-            font.weight: item.index === control.currentIndex ? Font.DemiBold : Font.Normal
+        readonly property bool isCurrent: item.index === control.currentIndex
+
+        contentItem: Item {
+            TNLabel {
+                anchors.left: parent.left
+                anchors.right: tick.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: item.modelData
+                elide: Text.ElideRight
+                color: item.isCurrent ? Theme.accent : Theme.text
+                font.weight: item.isCurrent ? Font.DemiBold : Font.Normal
+            }
+            // The selected item is marked by a tick as well as by color.
+            Icon {
+                id: tick
+                visible: item.isCurrent
+                name: "check"
+                size: 14
+                strokeWidth: 2.4
+                color: Theme.accent
+                anchors.right: parent.right
+                anchors.rightMargin: Theme.s3
+                anchors.verticalCenter: parent.verticalCenter
+            }
         }
         background: Rectangle {
             radius: Theme.radiusSm
-            color: item.highlighted || item.hovered ? Theme.surfaceRaised : "transparent"
+            color: item.down ? Theme.layerHigh
+                   : item.highlighted || item.hovered ? Theme.layerMid
+                   : item.isCurrent ? Theme.accentSoft : "transparent"
+            border.width: item.highlighted && control.popup.visible && item.visualFocus ? 1 : 0
+            border.color: Theme.focus
         }
     }
 
@@ -69,6 +92,7 @@ ComboBox {
     popup: Popup {
         y: control.height + Theme.s1
         width: control.width
+        margins: Theme.s2 // flips above / shifts when there is no room below
         implicitHeight: Math.min(contentItem.implicitHeight + 8, 260)
         padding: 4
 
@@ -79,10 +103,6 @@ ComboBox {
             currentIndex: control.highlightedIndex
             boundsBehavior: Flickable.StopAtBounds
         }
-        background: Rectangle {
-            radius: Theme.radiusMd
-            color: Theme.elevated
-            border.color: Theme.borderStrong
-        }
+        background: TNPopupSurface {}
     }
 }
