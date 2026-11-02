@@ -1,242 +1,190 @@
 # CLAUDE.md — TaskNest
 
-Guidance for Claude (and any contributor) working in this repository. Read this file and inspect the existing code and documentation before making changes.
+Guidance for Claude and contributors. Inspect existing code and docs before changing anything. Detail lives in the code and in `INTEGRATION.md` (local API, deep links, browser capture), `CLOUD.md` (cloud decisions/roadmap), `api/SYNC.md` and `api/openapi.yaml` (sync protocol); keep those in step with the code.
 
 ## Purpose
 
-TaskNest is an offline-first todo application for Windows. Everything is stored locally; there is no account, no cloud backup, and no forced updates.
+Offline-first todo app for Windows. Everything is stored locally; by default no account, no cloud, no forced updates. An **optional, off-by-default cloud sync ("Add Cloud")** is planned (see below); only its local storage groundwork (milestone M1) exists — there is no network sync yet.
 
-## Technology Requirements
+## Technology
 
-| Area        | Requirement                                                        |
-|-------------|--------------------------------------------------------------------|
-| Language    | C++17 or newer                                                     |
-| UI          | Qt Quick / QML                                                     |
-| Database    | SQLite via Qt SQL (`QSqlDatabase`, `QSqlQuery`, driver `QSQLITE`)  |
-| Build       | CMake, paths relative to the repository root                       |
-| Platform    | Windows (desktop)                                                  |
+| Area | Requirement |
+|---|---|
+| Language | C++17 or newer |
+| UI | Qt Quick / QML |
+| Database | SQLite via Qt SQL (`QSqlDatabase`, `QSqlQuery`, `QSQLITE`) |
+| Build | CMake, paths relative to repo root |
+| Platform | Windows desktop (Android planned, cloud milestone M9) |
+| Qt | 6.12.0 is the verified environment (the only Qt installed here; build and tests run against it); minimum 6.8 (unverified). Do not change without approval. |
+| Cloud (planned) | Python/FastAPI, PostgreSQL, SQLAlchemy 2.x, Alembic, OpenAPI REST+JSON, Docker |
 
 ## Product Principles
 
-- **Offline-first**: the app must be fully functional with no network connection. Data lives in a local SQLite file.
-- **No mandatory account**: no sign-in, registration, or user identity is required.
-- **No cloud backup**: do not add cloud sync or remote storage unless explicitly requested.
-- **No forced updates**: never auto-update or block usage on an update check.
-- **Reminders without unnecessary polling**: schedule reminders against the next due time (e.g. a single-shot timer re-armed on change) rather than periodic polling loops. Do not keep the CPU awake needlessly.
-- **Windows startup is optional and disabled by default**: only register for startup when the user explicitly enables it, and remove the registration when they disable it.
-- **Never overwrite or delete existing user data without explicit authorization.** Schema migrations must be non-destructive and preserve existing rows; destructive operations require explicit user confirmation.
+- **Offline-first**; data in a local SQLite file. **No mandatory account.** **No cloud by default** — only the approved opt-in "Add Cloud"; no other remote storage, telemetry or sync. **No forced updates.**
+- **Reminders without polling**: single-shot timer re-armed against the next due time.
+- **Windows startup is optional, off by default**; register only on explicit opt-in, remove on opt-out.
+- **Never overwrite or delete user data without explicit authorization.** Migrations are non-destructive; destructive operations need user confirmation.
 
 ## Architecture
 
-Keep the implementation modular, with a clear separation of concerns:
-
-- **Data layer** — SQLite access via Qt SQL, schema creation and migrations, repositories. No UI code.
-- **Domain/logic layer** — task models, business rules, reminder scheduling. No direct SQL in UI code.
-- **UI layer** — QML views and components; C++ types exposed to QML through models and `QObject` controllers.
-- **Entry point** — `main.cpp` wires the application together and does as little else as possible.
-
-QML talks to C++ only through clearly defined exposed types (models, controllers); business logic does not live in QML.
+- **Data layer**: SQLite access, schema/migrations, repositories. No UI code.
+- **Domain layer**: task models, business rules, reminder scheduling. No SQL in UI code.
+- **UI layer**: QML views/components; C++ exposed to QML only via models and `QObject` controllers. No business logic in QML.
+- **Entry point**: `main.cpp` only wires things together.
 
 ## Directory Structure
 
-The repository root is the project root.
-
 ```
 TaskNest/
-├── .git/
-├── .gitignore
-├── CLAUDE.md
-├── CMakeLists.txt
+├── CLAUDE.md, CLOUD.md, INTEGRATION.md, CMakeLists.txt
+├── api/          # cloud contract only: openapi.yaml, SYNC.md, conformance/ (no code; LF, UTF-8, no BOM)
+├── server/       # planned FastAPI backend (milestone M2); venv/caches/test output go under out/server/
+├── browser-extension/   # MV3 extension
+├── resources/    # app.qrc, app.rc, app.ico, app.manifest, runtime_manifest.cmake, make_icon.py
 ├── scripts/
-│   ├── src/        # .cpp implementation files with a matching header in include/
-│   ├── include/    # .h/.hpp headers matching files in src/
-│   └── main/       # main.cpp, Main.qml, MainView.qml, TaskEditor.qml (entry point and UI)
-├── tests/          # Qt Test suites (tst_tasknest, tst_ui)
-└── out/            # generated output; git-ignored. out/build is disposable; out/bin/data is NOT
-    ├── bin/        # TaskNest.exe (the only application executable) and its data/ folder
-    └── build/      # CMake/Ninja build tree, test executables, generated sources
+│   ├── src/      # .cpp with a matching header in include/
+│   ├── include/  # .h/.hpp matching src/
+│   └── main/     # main.cpp, QML files, qmldir, DateTimeInput.js (no matching project header)
+├── tests/        # Qt Test suites (tst_tasknest, tst_sync, tst_ui, qml/)
+└── out/          # generated, git-ignored
+    ├── bin/      # TaskNest.exe, TaskNestHost.exe, qt.conf, data/ (LIVE), runtime/ (generated)
+    └── build/    # CMake/Ninja tree (disposable)
 ```
 
-Rules:
+- Nothing generated may be written outside `out/`. Never put generated files in `scripts/`, `tests/` or the root.
+- **`out/bin/data/` holds the live database and is NOT disposable.** Clean only `out/build` (`cmake --build out/build --target clean` leaves `data/` alone). Deleting `out/` or `out/bin/data/` deletes the user's tasks.
+- `.gitkeep` files are placeholders; remove once the directory has real files. Do not create unnecessary directories or placeholder sources.
+- Tests use temporary databases, never `out/bin/data/`.
 
-- `scripts/src/` — implementation (`.cpp`) files that have a corresponding header in `scripts/include/`. Application logic lives here.
-- `scripts/include/` — project headers (`.h`/`.hpp`) corresponding to files in `scripts/src/`. Declarations and interfaces only.
-- `scripts/main/` — `main.cpp`, the QML files and other entry-point files with no corresponding project header. Do not put ordinary implementation files or their headers here, and never put generated files here.
-- `out/` — every generated file (build tree, objects, libraries, executables, test binaries) plus the portable `data/` database folder. Nothing generated may be written to `scripts/`, `tests/` or the repository root.
-- **`out/bin/data/` holds the live task database and is not disposable.** Delete or clean only `out/build` (or run `cmake --build out/build --target clean`, which leaves `data/` alone). Deleting `out/` or `out/bin/data/` deletes the user's tasks.
-- The folder is named `scripts` but is not limited to executable scripts; follow the conventions above.
-- Existing top-level folders such as `resources/` (Qt resource file `app.qrc`, Windows resource file `app.rc`, the icon `app.ico` and PNGs generated by `make_icon.py`; CMake generates a copy of `app.rc` in `out/build` with an absolute icon path because windres mishandles include paths with spaces) and `Assets/` are intentional project assets; keep them and add to them only where appropriate.
-- `.gitkeep` files are placeholders; remove one once its directory contains real files.
-- `tests/` holds automated tests. They must use temporary database files, never the user's real database.
-- Do not create unnecessary directories or placeholder source files.
+## Build
 
-## Task List Behavior
-
-- Default order (`Task::workflowLess`, mirrored by `TaskRepository::SortOrder::Workflow`): open tasks first; then earliest due date (undated last); then higher priority; then creation order. Changing the SQL or the comparator requires changing both.
-- The model updates incrementally: completing or re-timing a task *moves* its row; it never rebuilds the list.
-- Title search is a literal, Unicode case-insensitive substring match done in C++ (SQLite `LIKE` only folds ASCII). It composes with the view and the completion filter and never changes stored data.
-- Keyboard: Ctrl+N, Ctrl+F, Ctrl+Shift+W (floating widget), Ctrl+1..5 (views), F1 (reference), Down/Up (search/add into the list, between rows), Space, Enter, Delete on a row, Ctrl+Enter to save from notes. Avoid shortcuts that collide with text editing.
-- Destructive or repeatable actions (delete confirm, editor save) ignore a second activation while their dialog is closing.
-
-## Quick Add, Undo Delete and Single Instance
-
-- **Quick Add:** the add row is still "type a title, press Enter". The chevron beside Add task (or Ctrl+Shift+N) opens a details panel: priority, list, due date/time, reminder date/time and a one-line note. Details go through the same `TaskListModel::addTask` -> repository -> scheduler path, so reminders are scheduled by the add itself. Invalid dates are refused with the form left intact; a repeat click/Enter right after a successful add is ignored. There is deliberately no free-text syntax (`tomorrow !high`).
-- **Undo delete:** after a delete a notice offers Undo for 8 seconds (Ctrl+Z works while it shows and you are not typing). The model keeps **one** in-memory snapshot (the latest delete). Restoring re-inserts the same row with its **original id**, created/updated times and reminder state (`TaskRepository::restoreTask`; AUTOINCREMENT never reuses ids, and an occupied id is refused, not overwritten). A failed undo keeps the snapshot for a retry. The snapshot is discarded when the notice expires or is replaced, and is lost if the app exits first; nothing is written to disk for undo.
-- **Single instance:** `SingleInstanceGuard` holds a `QLockFile` named `<database>.lock` beside the database (so separate portable copies do not block each other). A second launch brings the running window forward (Win32) and exits with code 0 without showing a UI. `QLockFile` removes a lock whose owner process no longer exists, so a crash or kill never blocks the next start; a live owner's lock is never treated as stale. If the lock file cannot be created at all (permissions), TaskNest still starts and the database layer reports the real problem. Lock files are git-ignored (`*.lock`).
-
-## Completed-Task Cleanup (permanent deletion, user-configured)
-
-Completed tasks are kept forever unless the user explicitly chooses otherwise.
-
-- **Policy** (`CleanupPolicy`, `scripts/include/cleanuppolicy.h`), saved in `app_metadata` under `completed_cleanup_policy` as `never`, `immediately` or `days:<N>` (N = 1..3650; the UI offers 1, 7, 14 and 30, and shows a saved value outside that list). A missing, unreadable or invalid value means **Never automatically delete**; an invalid stored value is left as it is, not rewritten. The policy is read once at startup (`TaskListModel::loadCleanupPolicy`) and only changes when the user presses Save in **Settings** (sidebar, above the footer).
-- **Default is Never.** Upgrading to schema v3 deletes nothing. Selecting a policy that would delete tasks which are *already* completed first shows how many (`previewCleanup`) and needs a second, explicit confirmation ("Save and delete N"); Cancel saves nothing.
-- **Immediately:** completing a task deletes it instead (`TaskListModel::completeAndRemove`, one `DELETE`). The row never shows as completed; a database failure leaves the task active and reports the error. Not undoable.
-- **After N days:** a completed task is due once `completed_at <= now - N x 24h` (UTC, fixed-width text, compared as text). Tasks with an unknown `completed_at` are never due. Cleanup runs at startup, when a task is completed, when the window is re-activated, and when the policy is saved - never on a timer.
-- **Clear completed:** a manual action in Settings (always available, whatever the policy) behind a confirmation dialog; deletes every completed task, never an active one.
-- **Permanence:** policy and manual deletions never create an undo snapshot (`m_undo` is only set by `removeTask`). Rows are removed by id from the model; `updateTask`/`setCompleted` on a removed id fail with "not found" and never re-insert. Each deletion emits `tasksMutated`, so `ReminderScheduler::reschedule` drops the timer and any announced reminder (`reminderCancelled`).
-- **Database:** `TaskRepository::purgeCompleted` finds and deletes in one transaction with bound parameters and rolls back on any error or row-count mismatch; nothing is vacuumed (SQLite reuses freed pages; there is no automatic `VACUUM`). `tasks.completed_at` (schema v3, indexed for completed rows) is set when a task is completed, kept when it is completed again, cleared when reopened, and preserved by undo-restore. Migration backfilled it from `updated_at` for tasks that were already completed - never earlier than the real completion, so retention can only act later than it should, not sooner.
-- Failures are reported through `errorOccurred` and the dialogs; nothing is announced as removed unless the transaction committed.
-
-## Date and Time Input
-
-- Parsing/validation lives in `scripts/main/DateTimeInput.js` (a `.pragma library`, no UI), used by `Theme.parseDateTime` and the pickers, and tested directly by `tests/qml/tst_datetime.qml`. Results are local-time `Date`s; C++ converts to UTC exactly as before, and the stored format and schema are unchanged.
-- Accepted manual input: dates `YYYY-MM-DD` (also `YYYY/MM/DD`, `YYYY.MM.DD`, 1-digit month/day); times 24-hour `H:mm`, `HH:mm`, `HH:mm:ss` and the hyphen forms `HH-mm`, `HH-mm-ss` (minutes/seconds are two digits; `:` and `-` are not mixed). A valid entry is rewritten to `YYYY-MM-DD` / `HH:mm` (`HH:mm:ss` only when the seconds are not zero) when the field is left. An invalid entry is never changed or rolled into another day: the field keeps the typed text, gets the danger outline, and the form shows the reason (month length, leap year, range, a local time skipped by a clock change). Years 1000-9999.
-- Date-only values keep their defaults (due 23:59, reminder 09:00); the time field stays blank until the user sets it, and its picker starts at that default.
-- Components: `TNDateField` (calendar popup: click the field or its button, Alt+Down/F4; arrows, PageUp/PageDown, Home/End, Enter, T=today, Delete=clear, Esc=cancel; Clear/Cancel/Today buttons), `TNTimeField` (hour/minute spin boxes, seconds box when the value has seconds, quick presets, Clear/Cancel/Set), `TNCalendar`, `TNSpinBox`. Popup content is created only while the popup is open.
-
-## Floating Desktop Widget
-
-- `FloatingWidget.qml` is a separate frameless `Qt.Tool` top-level window (not in the taskbar, always on top by default, `transientParent: null` so it survives the main window being minimized). Show/hide it from the sidebar ("Floating widget"), Ctrl+Shift+W, or its own hide button / Esc / Alt+F4. It is **never** registered to start with Windows.
-- `WidgetController` (C++) holds the two read-only task views (Today, Upcoming) and the preferences. **All task changes go through the main `TaskListModel`** (complete/reopen, quick add, open in the main window via `taskData`); the main model's `tasksMutated` refreshes the views. No timers; the views also refresh when the app is re-activated.
-- Preferences are one JSON value in `app_metadata` (`widget_settings`): visibility, position, size, sections (Today, Upcoming, Quick add, Reminders, due/priority details), compact/comfortable, surface (Graphite/Deep/Raised, all from `Theme`), opacity (0.6-1.0), keep-on-top. Writes are debounced by a single-shot timer (0.4 s) and flushed on shutdown; unreadable values fall back to defaults and numbers are clamped.
-- A saved position that is no longer on a screen is moved back (`WidgetController::recoverPosition`; the title strip must stay reachable). The raw saved position is kept until the user moves the widget, so reconnecting a monitor restores it.
-- Closing the main window quits the application (`Main.qml onClosing`); `prepareForShutdown()` writes the preferences first and freezes visibility. The widget is shown at launch **only** when the `showOnLaunch` preference (Settings → Shortcuts & Startup, off by default) is on; the last session's open/closed state is not restored. Settings also holds the Start Menu shortcut toggle and a taskbar-pin helper (`ShortcutManager`; Windows has no silent pin API, so it creates the shortcut and reveals it for "Pin to taskbar"). The single-instance window activation skips tool windows.
-
-## Local Integration Endpoint
-
-- `IntegrationServer` (`scripts/include/integrationserver.h`) exposes a small local API over a per-user Windows named pipe. **Off by default**; the user enables it in Settings (stored as `integration_enabled`). While off there is no pipe, token or discovery file. Contract, threat model and error codes are in `INTEGRATION.md`; keep that file in step with the code.
-- Operations go through `TaskListModel`/`TaskRepository` (no SQL in the server) and UI requests are signals handled in `Main.qml`; they raise the main window only, never the floating widget. It never launches TaskNest and has no timers beyond a per-connection 5 s cut-off.
-- Tests use a scratch discovery folder (`setDiscoveryDirectory`) and must not touch `%LOCALAPPDATA%\TaskNest\integration`.
-
-## Deep Links and Global Quick Add
-
-- `DeepLink::parse` (`scripts/include/deeplink.h`) is the only place a `tasknest://` link is interpreted: `task/<id>`, `view/<name>`, `quickadd`; everything else is refused with a message that never echoes the link. Links carry no content and no token.
-- A second launch forwards the link to the running instance with `WM_COPYDATA` (`SingleInstanceGuard::sendDataToProcess`, received by `DeepLinkRouter`) and exits; it never opens the database. The scheme is registered under HKCU only when the user switches it on in Settings (`UrlSchemeRegistration`); tests use a scratch registry root.
-- `GlobalHotkey` registers the optional shortcut with `RegisterHotKey` (off by default, released on disable/exit, conflicts reported). It only opens `QuickCaptureWindow.qml`, a separate small window; it never raises the main window or the floating widget. A top-level window that vetoes `onClosing` keeps the process alive after the main window closes, so `QuickCaptureWindow` accepts the close.
-- Details, formats and limits: `INTEGRATION.md`.
-
-## Browser Capture and Cross-Application Capture
-
-- **Companion program:** besides `TaskNest.exe`, the build produces `out/bin/TaskNestHost.exe`, a small console Native Messaging host (Qt Core + Network only, `tasknesthostcore`). The browser starts it per message; it answers once and exits, never starts TaskNest and never returns the integration credential. Allowed operations are `status` and `capture` only; everything else is refused in `NativeHost::handle`.
-- **Extension:** `browser-extension/` (MV3, permissions `activeTab`, `scripting`, `contextMenus`, `nativeMessaging`). Its id is fixed by the manifest `key` and must equal `NativeHost::kExtensionId`; a test enforces this and the minimal permission set. Shared logic lives in `capture-core.js` (a classic script so QML tests can import it).
-- **Registration:** only from Settings (HKCU, off by default) through `NativeHostRegistration`; tests use a scratch registry base and manifest folder.
-- **Idempotency:** `capture_page` takes an optional `request_id`; the same id within 10 minutes returns the first task. No other de-duplication.
-- **Unknown outcome:** once a `capture` request has been written to the pipe, a missing answer (timeout, closed pipe, host exit) is `outcome_unknown`, never a plain failure; only refusals before the write are confirmed failures. The popup (`createCaptureSession` in `capture-core.js`) keeps one request id per capture, ignores presses while pending, and re-sends the same id on "Check again". The server keeps an answered connection open (`kReplyLingerMs`) so the client can read the answer; closing at once lost answers under load.
-- **Other applications:** `SelectionCapture` reads the focused element's selection through UI Automation on explicit request only (second `GlobalHotkey`, key `global_capture_selection`, off by default), shows it in `SelectionCaptureWindow.qml` and stores nothing until confirmed. No keystroke injection, clipboard access or password fields.
-- Top-level windows of this app must accept `onClosing`; a vetoing hidden window keeps the process alive after the main window closes.
-- The manifest points at a small launcher script (`com.tasknest.host.bat`, written at registration time) that prepends the Qt/MinGW folders TaskNest is running from, because browsers start the host with their own PATH. Registry *reads* use `RegistryUtil` (read-only): `QSettings` creates the key it points at, so never use it just to ask whether something is registered.
-- UI tests: `tst_ui.qml` `cleanup()` destroys the view and waits until it and its dialogs (which live in the window overlay, not under the view) are gone; `find()` returns the first match, so a stale previous dialog would otherwise take the next test's input. `init()` skips visibly when the window cannot be activated.
-- The host reads stdin **unbuffered** (`QIODevice::Unbuffered`): browsers keep the pipe open while waiting for the reply.
-
-## Database Location and Safety
-
-- File name: `tasknest.db`. Chosen by `Database::defaultDatabasePath()` in this order:
-  1. an existing `<exe folder>/data/tasknest.db` (portable mode);
-  2. an existing `%APPDATA%\TaskNest\tasknest.db`;
-  3. on first run only: `<exe folder>/data/` if writable, otherwise `%APPDATA%\TaskNest\`.
-- An existing database is always reused. If it exists but its folder is not writable, startup fails with an explicit message; TaskNest never quietly creates a second, empty database elsewhere.
-- The active path is shown in the sidebar footer (tooltip: full path).
-- Upgrading an existing database first copies it to `tasknest.db.v<N>.bak` (once per source version, byte-identical). If the copy cannot be made, the upgrade is not attempted and the database is left untouched.
-- Do not keep the live database in a folder that a cloud-sync client (OneDrive, Dropbox) is syncing: SQLite files and sync conflicts do not mix. The development checkout lives under OneDrive, so keep copies of `out/bin/data/` if the data matters.
-- Only one TaskNest instance can use a database at a time (see Single Instance above).
-- Tests must use temporary databases; never point a test at `out/bin/data/`.
-
-## UI Design System
-
-- Every color, size, radius, spacing step and duration comes from `scripts/main/Theme.qml` (a QML singleton). Do not hard-code them in other QML files.
-- Visual direction: graphite surfaces with a cool undertone, one electric-lime accent (actions and the active state only), violet for reminders, amber/red only for time pressure and errors. Urgency is always conveyed by an icon and words as well as color.
-- Reusable components are prefixed `TN` (`TNButton`, `TNTextField`, `TNComboBox`, `TNDialog`, ...) plus `Icon` (vector line icons from `Theme.icons`), `TaskRow`, `NavItem`, `TaskCheck`, `ReminderBanner`, `EmptyState`, `CleanupSettings`, `TNDateField`, `TNTimeField`, `TNCalendar`, `TNSpinBox`, `TNPopupSurface` (background of every popup/drop-down), `Atmosphere`, `FloatingWidget`. Build screens from these rather than styling stock controls inline.
-- `scripts/main/qmldir` lists every component so the UI tests can load the QML straight from the source folder; add new components to it **and** to `QML_FILES` in `CMakeLists.txt`.
-- Do not name a property `onX` where `X` is another property of the same item: QML reads it as that property's change handler (e.g. `accentText`, not `onAccent`).
-- Motion comes from `Theme` tokens only (`durationFast/Base/Slow/Pulse`, `easeOut/easeInOut`, `enterOffset`, `pressScale`). Windows animation effects off **or** the user's Settings -> Reduce motion (persisted as `reduceMotion` in `widget_settings`, applied to `Theme.userReducedMotion` by `MainView`) set every duration/offset to 0 at once. Animations are decoration only: state (visibility, model rows, focus) changes immediately; there are no looping animations. Depth uses the `layer*`/`highlight` tokens and `Atmosphere.qml` (static radial gradients, not 3D).
-- Keep `objectName`s that the UI tests use (see `tests/qml/`).
-
-## Coding Standards
-
-- C++17 or newer; prefer standard library facilities and Qt idioms (parent-child ownership, signals/slots).
-- One class per header/source pair, with matching file names (`TaskRepository.h` ↔ `TaskRepository.cpp`).
-- Use include guards or `#pragma once` consistently across headers.
-- Use RAII and smart pointers where Qt parent ownership does not apply; avoid raw `new`/`delete` outside Qt ownership.
-- Use parameterized SQL (`QSqlQuery::prepare` + `bindValue`); never build SQL by string concatenation with user input.
-- Run database access and any long-running work so that the UI thread is not blocked.
-- Handle and surface errors (database open failures, query failures) instead of ignoring them.
-- Keep QML declarative and free of business logic; keep components small and reusable.
-- Match the naming and style of surrounding code; keep comments purposeful rather than redundant.
-
-## Build Expectations
-
-- Build system: CMake, with all paths relative to the repository root (use `CMAKE_SOURCE_DIR` / `CMAKE_CURRENT_SOURCE_DIR`).
-- Out-of-source builds only, in `out/build/`; `out/` is git-ignored.
-- One application executable: the app is always `out/bin/TaskNest.exe` (plus the small companion `out/bin/TaskNestHost.exe` for the browser extension). The default build type is Release; configuring the same build directory with `-DCMAKE_BUILD_TYPE=Debug` rebuilds that same file as a Debug build. Do not create per-configuration output folders or duplicate executables.
-- Qt and MinGW runtime DLLs are not copied next to the executable; they must be on `PATH` (see below). No installer or deployment package exists yet.
-- Build commands, run from the repository root (PATH must contain `D:\Apps\Qt6\Tools\mingw1310_64\bin`, `D:\Apps\Qt6\Tools\Ninja`, `D:\Apps\Qt6\Tools\CMake_64\bin`, and `D:\Apps\Qt6\6.11.1\mingw_64\bin` to run it):
+- Out-of-source in `out/build/`; default Release; Debug via `-DCMAKE_BUILD_TYPE=Debug` in the same tree. One app executable `out/bin/TaskNest.exe` (+ `TaskNestHost.exe`); no per-config output folders.
+- Build deploys the Qt/MinGW runtime into `out/bin/runtime/` (windeployqt) via an embedded private side-by-side manifest; `runtime/` is disposable. `-DTASKNEST_DEPLOY_DLLS=OFF` embeds no manifest (Qt/MinGW must be on `PATH`).
+- PATH needs `D:\Apps\Qt6\Tools\mingw1310_64\bin`, `D:\Apps\Qt6\Tools\Ninja`, `D:\Apps\Qt6\Tools\CMake_64\bin`, `D:\Apps\Qt6\6.12.0\mingw_64\bin`. From the repo root:
 
   ```
-  cmake -S . -B out/build -G Ninja -DCMAKE_PREFIX_PATH=D:/Apps/Qt6/6.11.1/mingw_64 -DCMAKE_CXX_COMPILER=D:/Apps/Qt6/Tools/mingw1310_64/bin/g++.exe
+  cmake -S . -B out/build -G Ninja -DCMAKE_PREFIX_PATH=D:/Apps/Qt6/6.12.0/mingw_64 -DCMAKE_CXX_COMPILER=D:/Apps/Qt6/Tools/mingw1310_64/bin/g++.exe
   cmake --build out/build
   ctest --test-dir out/build --output-on-failure
   ```
-- Link only required Qt modules (Core, Gui, Qml, Quick, Sql).
-- Do not commit executables, object files, or generated files.
-- Do not add third-party dependencies or download libraries without explicit approval.
+- Link only needed Qt modules (Core, Gui, Qml, Quick, Sql). No new third-party dependencies or downloads without approval.
+- The C++ build and CTest MUST NOT require Python, Docker or PostgreSQL. Server tests are separate and off by default.
+- Do not install PostgreSQL, Docker, extra Qt versions or kits (incl. Android) without approval.
+- Do not commit executables, objects or generated files.
+
+## Coding Standards
+
+- C++17+; standard library and Qt idioms (parent-child ownership, signals/slots); RAII/smart pointers where Qt ownership doesn't apply; no raw `new`/`delete` outside Qt ownership.
+- One class per header/source pair with matching names; `#pragma once` consistently.
+- Parameterized SQL only (`prepare` + `bindValue`); never concatenate user input.
+- Keep long-running work off the UI thread. Surface errors; don't ignore them.
+- Match surrounding naming/style; comments purposeful, not redundant. QML declarative and small/reusable.
+
+## UI Design System
+
+- Every color, size, radius, spacing, duration comes from the `Theme.qml` singleton; never hard-code in other QML.
+- Direction: graphite surfaces, one electric-lime accent (actions/active state), violet for reminders, amber/red only for time pressure and errors. Urgency is conveyed by icon and words as well as color.
+- Reusable components are `TN`-prefixed (`TNButton`, `TNTextField`, `TNDialog`, `TNDateField`, `TNTimeField`, ...) plus `Icon`, `TaskRow`, `NavItem`, `TaskCheck`, `TNPopupSurface` (all popups), `Atmosphere`, etc. Build screens from these.
+- New components go in `scripts/main/qmldir` **and** `QML_FILES` in `CMakeLists.txt`.
+- Do not name a property `onX` where `X` is another property (read as a change handler); e.g. `accentText`, not `onAccent`.
+- Motion only from `Theme` tokens; Windows animation-off or Settings → Reduce motion (`reduceMotion` in `widget_settings`) zeroes all durations. Animations are decoration only; state changes immediately; no looping animations.
+- Keep `objectName`s used by UI tests (`tests/qml/`). Every top-level window must accept `onClosing`; a vetoing hidden window keeps the process alive.
+
+## Behavior Reference (code is the source of truth; these are the non-obvious rules)
+
+**Task list**
+- Default order (`Task::workflowLess` mirrored by `TaskRepository::SortOrder::Workflow`; change both together): open first; earliest due (undated last); higher priority; creation order.
+- Model updates incrementally (rows move, never rebuild).
+- Title search: literal, Unicode case-insensitive substring in C++ (SQLite `LIKE` folds only ASCII); composes with view/filter; never changes data.
+- Shortcuts: Ctrl+N, Ctrl+F, Ctrl+Shift+W (widget), Ctrl+Shift+N (quick-add details), Ctrl+1..5 (views), F1, Ctrl+Z (undo), Ctrl+Enter (save notes). Avoid text-editing collisions.
+- Destructive/repeatable actions ignore a second activation while their dialog is closing.
+
+**Quick Add / Undo / Single instance**
+- Quick Add: type a title + Enter; chevron or Ctrl+Shift+N opens details (priority, list, due, reminder, note) through the same `TaskListModel::addTask` path. Invalid dates refuse with form intact. No free-text syntax.
+- Undo: one in-memory snapshot of the latest delete, 8 s notice; `TaskRepository::restoreTask` re-inserts with original id/timestamps/reminder state, refuses an occupied id; failed undo keeps the snapshot; nothing persisted.
+- `SingleInstanceGuard`: `QLockFile` `<database>.lock` beside the DB; second launch brings the window forward (or forwards a deep link) and exits 0 without UI; stale locks self-clear; if the lock can't be created, still start. `*.lock` is git-ignored.
+
+**Completed-task cleanup (permanent deletion, user-configured)**
+- Policy (`CleanupPolicy`) in `app_metadata` `completed_cleanup_policy`: `never` | `immediately` | `days:<N>` (1..3650). Missing/invalid = **Never**; invalid values are not rewritten. Read at startup; changes only when the user presses Save in Settings.
+- **Default Never.** A policy that would delete already-completed tasks first shows the count (`previewCleanup`) and needs a second explicit confirmation; Cancel saves nothing.
+- Immediately: completing deletes (`completeAndRemove`, one DELETE, not undoable; a DB failure leaves the task active). After N days: due when `completed_at <= now - N×24h` (UTC fixed-width text); unknown `completed_at` is never due. Runs at startup, on completion, on window re-activation, on policy save — never on a timer.
+- "Clear completed" in Settings: always available, confirmation dialog, completed tasks only.
+- Cleanup deletions never create an undo snapshot; `updateTask`/`setCompleted` on a removed id fail "not found" and never re-insert; each emits `tasksMutated` (scheduler drops timers/announced reminders).
+- `purgeCompleted`: find+delete in one transaction, bound params, rollback on error or row-count mismatch; no automatic VACUUM. Report only committed removals. `completed_at` (schema v3) is set on completion, kept on re-complete, cleared on reopen, preserved by undo.
+
+**Date/time input** (`scripts/main/DateTimeInput.js`, tested by `tests/qml/tst_datetime.qml`)
+- Results are local-time `Date`s; C++ converts to UTC; stored format unchanged.
+- Dates `YYYY-MM-DD` (also `/`, `.`, 1-digit month/day); times 24h `H:mm`, `HH:mm`, `HH:mm:ss`, `HH-mm`, `HH-mm-ss`; years 1000–9999. Valid entry is normalized on blur. Invalid entry is never changed or rolled into another day: keep text, danger outline, show the reason.
+- Date-only defaults: due 23:59, reminder 09:00; time field stays blank until set.
+
+**Floating widget** (`FloatingWidget.qml`, `WidgetController`)
+- Frameless `Qt.Tool` window, not in taskbar, on top by default, `transientParent: null`. Never registered for startup. Shown at launch only if `showOnLaunch` is on.
+- All task changes go through the main `TaskListModel`; its `tasksMutated` refreshes the widget views. No timers.
+- Preferences: one JSON value `widget_settings` in `app_metadata`; writes debounced 0.4 s, flushed on shutdown; bad values fall back to defaults, numbers clamped. Off-screen saved position is recovered for display but the raw position is kept until the user moves it.
+
+**Background / tray / startup**
+- Closing the main window quits unless Settings → "Keep running in the background" (`runInBackground`, off by default): then it hides to a tray icon (`TrayIcon.qml`); reminders raise a tray message; if no tray, closing quits. `quitOnLastWindowClosed` is false; `Main.qml` decides when the process ends. `prepareForShutdown()` writes preferences first.
+- "Start with Windows" (off by default, requires background option): one per-user `HKCU\...\Run` value `TaskNest` = `"<exe>" --background` (`ShortcutManager::setStartWithWindows`), removed when off; refused in a test profile. Start Menu shortcut / taskbar-pin helper also in `ShortcutManager`.
+
+**Integration endpoint, deep links, browser capture** (details: `INTEGRATION.md`)
+- `IntegrationServer`: local named-pipe API, **off by default** (`integration_enabled`); while off there is no pipe/token/discovery file. Operations go through `TaskListModel`/`TaskRepository`; UI requests are signals handled in `Main.qml`; never launches TaskNest; no timers beyond a per-connection 5 s cut-off. Tests use `setDiscoveryDirectory`, never `%LOCALAPPDATA%\TaskNest\integration`.
+- `DeepLink::parse` is the only place `tasknest://` is interpreted (`task/<id>`, `view/<name>`, `quickadd`); links carry no content/token; refusals never echo the link. Scheme registered under HKCU only when enabled in Settings (`UrlSchemeRegistration`). A second launch forwards via `WM_COPYDATA` and never opens the DB.
+- `GlobalHotkey` (`RegisterHotKey`, off by default) opens only `QuickCaptureWindow.qml`. `SelectionCapture` reads the selection via UI Automation on explicit request only (key `global_capture_selection`, off by default); stores nothing until confirmed; no keystroke injection, clipboard access or password fields.
+- `TaskNestHost.exe`: Native Messaging host (Qt Core + Network), answers once and exits, never starts TaskNest, never returns the credential; only `status` and `capture`. Extension id fixed by manifest `key` and must equal `NativeHost::kExtensionId` (tested, as is the minimal permission set). Registration only from Settings (HKCU, off by default) via `NativeHostRegistration`; registry *reads* use read-only `RegistryUtil` (`QSettings` creates keys). Host reads stdin unbuffered.
+- `capture_page` optional `request_id` is idempotent for 10 min. Once a `capture` is written to the pipe, a missing answer is `outcome_unknown`, never a plain failure; popup keeps one request id per capture and re-sends it on "Check again".
+
+## Database Location and Safety
+
+- File `tasknest.db`, chosen by `Database::defaultDatabasePath()`: (1) existing `<exe folder>/data/tasknest.db` (portable); (2) existing `%APPDATA%\TaskNest\tasknest.db`; (3) first run: `<exe folder>/data/` if writable, else `%APPDATA%\TaskNest\`.
+- An existing DB is always reused; if its folder isn't writable, startup fails explicitly — never silently create a second empty DB. Active path shown in the sidebar footer.
+- Upgrades first copy to `tasknest.db.v<N>.bak` (once per source version, byte-identical); if the copy fails the upgrade is not attempted.
+- Don't keep the live DB in a cloud-synced folder (OneDrive, Dropbox). The dev checkout is under OneDrive, so keep copies of `out/bin/data/`.
+- One TaskNest instance per database.
+
+## Optional Cloud Sync (approved architecture; M1 local storage only)
+
+Reasoning/risks: `CLOUD.md`. Protocol: `api/SYNC.md`, `api/openapi.yaml`. If code and these disagree, stop and resolve it. Invariants:
+
+- **Off by default**, opt-in "Add Cloud" in Settings. Off or unlinked → never touches the network for sync. Local settings (incl. local cleanup policy) are never overwritten by cloud state.
+- **SQLite stays the source of truth.** Additive, non-destructive migrations (`user_version` 3→4+) with the existing byte-copy backup first; extra byte-identical backup before first account link and before any sync-driven local deletion.
+- **API contract is owned by TaskNest** (`api/`); no provider-specific SDK/host/field/DB logic; server URL is user-editable; backend runs on any standard PostgreSQL/Docker host.
+- **Identity/ordering:** client-generated UUID per task (local integer `id` stays device-local); server alone orders changes (per-account sequence), client clocks never decide; ops idempotent by `op_id`; writes via a transactional outbox in the same transaction as the local change.
+- **Deletion/conflicts:** all deletions sync as tombstones (incl. retention purges); a deliberate user edit resurrects a deleted task ("edit wins", user notified), holding an old copy never does; conflicts preserved and shown (`SYNC.md` §6–7).
+- **Cleanup policy:** one account-wide policy when linked (`SYNC.md` §8).
+- **Accounts:** login name + Argon2id password + ten single-use recovery codes; no email in v1; losing both = cloud account unrecoverable (local data unaffected); no auto-deletion of inactive accounts.
+  - Passwords: NFC-normalized, 15–128 Unicode code points, case/whitespace preserved, no composition rules or periodic change, local common-password blocklist (no external API). Login identifiers: NFKC + casefold.
+  - Sessions: refresh tokens slide 90 days, absolute limit 180 days from family creation; rotation with reuse detection. Strict rotation, no grace window: a lost refresh response means re-login. Access tokens stop working the moment their family expires or is revoked (`CLOUD.md` §16.4).
+  - Devices: max 25 active; the 26th sign-in gets `409 device_limit_reached`; never auto-revoke. Device list/revoke belong to M2.
+- **Secrets:** tokens in the OS secure store (Credential Manager; Android Keystore), never in SQLite, settings, logs or command lines. Task content never logged.
+- **Event-driven sync:** debounced push after local change, pull on activation, explicit "Sync now", single-shot backoff timers only while work is pending; no periodic polling; failures never block local use.
+- **Tests:** server tests use a local PostgreSQL with a dedicated test DB; Qt tests use temporary SQLite and a fake/local server; sync is refused under `--test-profile` against any real server. Both suites run `api/conformance/` fixtures in place.
+
+Delivery is by milestone M0–M10 (`CLOUD.md` §10); **each starts only after the owner explicitly approves it.** M0 (contract, rules, fixtures, docs) is complete. M1 (local storage groundwork: schema, UUIDs, bases, tombstones, outbox, transactional mutations, conflict table; no network code, `SyncStore`) was explicitly approved by the owner and is in progress — its schema changes are additive. The live database (`out/bin/data/tasknest.db`) is already at schema v4 (`user_version` 4): a migration has occurred, but who or what ran it is unknown (not recorded; Claude did not run it). The pre-migration backup `tasknest.db.v3.bak` (schema v3) remains available beside it; keep it. Sync itself (network, server, UI, account linking) is not implemented. **M2 (server skeleton: accounts, sessions, recovery, devices only) is approved in plan; only its documentation step M2.0 is approved so far.** M2 contains no sync tables or endpoints: `processed_ops`, `conflicts`, migration 0002 and the 90-day retention purge (with its database tests) belong to **M3**. The 90-day policy is documented now: deleted task content can remain in conflict history for up to 90 days. `api/` changes for M2 need separate owner approval of the shown diff. No M2.1+ work, dependency, PostgreSQL or Docker installation without explicit approval (`CLOUD.md` §16). Do not start the next milestone, run a migration, install software, or modify application source beyond the approved milestone's scope.
 
 ## Development Rules
 
-1. Inspect existing code and documentation before changing anything; do not assume.
-2. Follow the directory structure above and keep modules focused and decoupled.
-3. Do not move, rename, or delete existing project files without inspecting their purpose and reporting the plan first.
-4. Never overwrite or delete existing user data or local database files without explicit authorization.
-5. Do not commit, push, or create releases unless explicitly requested.
-6. Keep changes minimal and scoped to the task; do not implement features beyond what was asked.
-7. Local database files (`*.db`, `*.sqlite*`) and build artifacts must never be committed.
+1. Inspect existing code and docs first; do not assume.
+2. Follow the directory structure; keep modules focused and decoupled.
+3. Do not move, rename or delete existing project files without inspecting their purpose and reporting the plan first.
+4. Never overwrite or delete user data or local database files without explicit authorization.
+5. Do not commit, push or create releases unless explicitly requested.
+6. Keep changes minimal and scoped; no features beyond what was asked.
+7. Never commit `*.db`, `*.sqlite*` or build artifacts.
+8. Cloud work: one approved milestone at a time (see above).
 
-## Scratch Test Profile (`--test-profile`)
+## Scratch Test Profile (`--test-profile <root>`)
 
-For acceptance testing only. **Never point it at the real data folder** (`out/bin/data`, `%APPDATA%\TaskNest`, `%LOCALAPPDATA%\TaskNest`); such folders are refused.
+Acceptance testing only; selected solely by the command-line option (never env var, setting or browser message). **Never point it at real data** (`out/bin/data`, `%APPDATA%\TaskNest`, `%LOCALAPPDATA%\TaskNest`); those are refused. Invalid option → exit code 2 before touching any database.
 
-Normal launches are unchanged: the profile is selected only by the command-line option, never by an environment variable, a setting or a browser message.
+- `<root>` rules (`TestProfile`, `scripts/include/testprofile.h`): absolute local drive path, no `.`/`..`, not a drive root or UNC, must not equal/contain/sit inside the exe folder, `<exe>\data`, `%APPDATA%\TaskNest`, `%LOCALAPPDATA%\TaskNest`. TaskNest creates the folder (plus `data\`) and marker `tasknest-test-profile.json`; a non-empty folder without the marker is refused.
+- Redirected: DB+settings → `<root>\data\tasknest.db`; lock beside it; integration discovery → `<root>\integration`; host manifest/launcher → `<root>\native-host`; browser-host registry keys → `HKCU\Software\TaskNestTestProfiles\<16 hex of root>\...`. `tasknest://` registration and Start Menu shortcut are refused.
+- The host (`TaskNestHost.exe --test-profile "<root>"`) uses only `<root>\integration` and requires the marker; a missing/unmarked profile or unexpected argument answers `configuration`. Tokens are never on a command line.
+- Limitation: browsers read only the real `NativeMessagingHosts` keys, so a profile does not make Chrome/Edge discover the host.
+- "Is TaskNest running?" (`NativeHost::isInstanceRunning`) reads the served database's `.lock` and requires a live `TaskNest.exe` owner, so a scratch instance is never mistaken for the normal one.
+- Clean up: close the scratch instance (turn browser capture off first, or delete `HKCU\Software\TaskNestTestProfiles\<hash>`), then delete `<root>` only.
 
-```
-TaskNest.exe --test-profile C:\scratch\tn-profile-1
-```
+## Testing and Reporting
 
-| What | Production | With `--test-profile <root>` |
-|---|---|---|
-| Database + settings | `Database::defaultDatabasePath()` | `<root>\data\tasknest.db` |
-| Instance lock | `<database>.lock` | beside that database |
-| Integration discovery + pipe | `%LOCALAPPDATA%\TaskNest\integration`; pipe derived from user + database path | `<root>\integration`; the pipe differs because the database path differs |
-| Host manifest + launcher | `%LOCALAPPDATA%\TaskNest\native-host` | `<root>\native-host` |
-| Browser host registry keys | `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.tasknest.host` and the Edge equivalent | `HKCU\Software\TaskNestTestProfiles\<16 hex of root>\...` (same relative layout) |
-| `tasknest://` registration, Start Menu shortcut | real HKCU / Start Menu | refused |
-
-Rules enforced by `TestProfile` (`scripts/include/testprofile.h`):
-
-* `<root>` must be an absolute local drive path with no `.` or `..` segments, not a drive root, not UNC, and must not equal, contain or sit inside the exe folder, `<exe>\data`, `%APPDATA%\TaskNest` or `%LOCALAPPDATA%\TaskNest`.
-* TaskNest creates the folder and a marker file `tasknest-test-profile.json`; a non-empty folder without the marker is refused. The host never creates anything and requires the marker.
-* An invalid option stops TaskNest with exit code 2 before any database or real location is touched.
-
-Host: with a profile, the launcher TaskNest writes passes `--test-profile "<root>"` to `TaskNestHost.exe`. The host then uses only `<root>\integration` (no fallback to the per-user folder). A missing or unmarked profile, or an unexpected argument, answers every request with `configuration` and contacts nothing. Without the argument the host is the normal one and never looks in a profile. Authentication is unchanged and no token is ever on a command line.
-
-**Limitation:** browsers read only the real `NativeMessagingHosts` keys, so a profile's registry subtree isolates TaskNest's own bookkeeping and the automated tests; it does **not** make Chrome or Edge discover the host. It is a test mechanism, not a way to install the extension.
-
-Clean up: close the scratch TaskNest (turn browser capture off in its Settings first, or delete `HKCU\Software\TaskNestTestProfiles\<hash>`), then delete `<root>`. Do not delete anything else.
-
-Instance identity: "is TaskNest running?" (`NativeHost::isInstanceRunning`) reads the single-instance lock `<database>.lock` of the database being served and requires its owner to be a live `TaskNest.exe`; it never matches by executable name alone, so a scratch instance cannot be mistaken for the normal one (or the reverse). A profile's host asks about `<root>\data\tasknest.db.lock`; the production host asks about `<exe folder>\data` and `%APPDATA%\TaskNest`. The profile folder creates `data\` up front so that this lock can be taken on the very first launch.
-
-Verified by launching the real executable (see the Phase 4H report): the profile is created with its marker, database and lock, a second launch of the same profile exits with code 0 without a window, a second profile runs alongside it, and `TaskNestHost.exe --test-profile` reports `integration_disabled` / `not_running` / `ready` per profile.
-
-## Test Reporting
-
-`tests/RunQtTest.cmake` wraps both Qt Test executables (they are GUI-subsystem programs with no console). It writes `out/build/tests/tst_tasknest.log` and `tst_ui.log`, prints the failed/skipped tests and a `SUMMARY: N passed, N failed, N skipped` line, and fails the CTest entry as **INCOMPLETE** when skips exceed the budget (`TASKNEST_SKIP_BUDGET`, `TASKNEST_UI_SKIP_BUDGET`; default 0). A UI test skips only after it positively detects that its window cannot get OS foreground activation. A green CTest entry therefore means every test ran, unless a budget was raised on purpose.
-
-The wrapper itself is covered by the `qt_test_wrapper` CTest entry (`RunQtTestSelfTest.cmake` with the fake `tst_fakeqt`): failures, exceeded budgets, missing, empty and truncated logs and zero-test runs must all fail. `tst_tasknest` also starts disposable processes under scratch profiles: `tst_lockowner` (a stand-in lock owner, copied to `TaskNest.exe` for the positive identity case) and the real `TaskNest.exe --test-profile` with `QT_QPA_PLATFORM=offscreen` (no window, closed with WM_QUIT to its own threads); they are killed even when a test fails and never use the live database.
+- `tests/RunQtTest.cmake` wraps the Qt Test executables (GUI-subsystem, no console): writes `out/build/tests/*.log`, prints failures/skips and `SUMMARY: N passed, N failed, N skipped`, and fails the CTest entry as **INCOMPLETE** when skips exceed the budget (`TASKNEST_SKIP_BUDGET`, `TASKNEST_UI_SKIP_BUDGET`; default 0). A green entry means every test ran. Wrapper covered by `qt_test_wrapper` (`RunQtTestSelfTest.cmake`, fake `tst_fakeqt`).
+- UI tests skip only after positively detecting that the window cannot get OS foreground activation. `tst_ui.qml` `cleanup()` destroys the view and waits until it and its dialogs (in the window overlay) are gone — `find()` returns the first match, so a stale dialog would take the next test's input.
+- `tst_tasknest` starts disposable processes under scratch profiles (`tst_lockowner`, real `TaskNest.exe --test-profile` with `QT_QPA_PLATFORM=offscreen`); they are killed even on failure and never use the live database.

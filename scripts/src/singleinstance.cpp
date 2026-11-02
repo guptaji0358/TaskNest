@@ -14,6 +14,7 @@ struct FindWindowData
 {
     DWORD pid = 0;
     HWND window = nullptr;
+    HWND hidden = nullptr; // fallback: the app's own window while it is hidden to the tray
 };
 
 BOOL CALLBACK findWindowOfProcess(HWND window, LPARAM param)
@@ -28,6 +29,17 @@ BOOL CALLBACK findWindowOfProcess(HWND window, LPARAM param)
         && GetWindow(window, GW_OWNER) == nullptr) {
         data->window = window;
         return FALSE; // stop
+    }
+    // A main window hidden to the tray is not visible but still receives
+    // messages. Only Qt's own top-level window class qualifies (Qt also keeps
+    // internal helper windows).
+    if (windowPid == data->pid && !data->hidden && !toolWindow
+        && GetWindow(window, GW_OWNER) == nullptr) {
+        wchar_t cls[64] = {};
+        GetClassNameW(window, cls, 64);
+        if (wcsncmp(cls, L"Qt", 2) == 0 && wcsstr(cls, L"QWindow") != nullptr
+            && wcsstr(cls, L"ToolSaveBits") == nullptr)
+            data->hidden = window;
     }
     return TRUE;
 }
@@ -120,6 +132,8 @@ bool SingleInstanceGuard::sendDataToProcess(qint64 pid, quintptr id, const QByte
     FindWindowData data;
     data.pid = static_cast<DWORD>(pid);
     EnumWindows(findWindowOfProcess, reinterpret_cast<LPARAM>(&data));
+    if (!data.window)
+        data.window = data.hidden; // hidden to the tray: still reachable
     if (!data.window)
         return false;
     // This process was just started by the user (a clicked link), so it may

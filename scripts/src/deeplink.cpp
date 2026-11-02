@@ -187,6 +187,12 @@ bool DeepLinkRouter::nativeEventFilter(const QByteArray &eventType, void *messag
     if (msg->message != WM_COPYDATA || !msg->hwnd)
         return false;
     const auto *data = reinterpret_cast<const COPYDATASTRUCT *>(msg->lParam);
+    if (data && data->dwData == kShowWindowId) {
+        QMetaObject::invokeMethod(this, &DeepLinkRouter::showWindowRequested, Qt::QueuedConnection);
+        if (result)
+            *result = TRUE;
+        return true;
+    }
     if (!data || data->dwData != kCopyDataId)
         return false; // some other WM_COPYDATA: not ours
     QString text;

@@ -14,6 +14,7 @@ struct Task
     static constexpr int kMaxPriority = 2;
 
     qint64 id = 0; // 0 = not yet stored
+    QString uuid;  // device-independent identity (schema v4); empty = not yet stored
     QString title;
     QString notes;
     QString listName = QStringLiteral("Inbox");

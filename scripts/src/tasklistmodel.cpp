@@ -364,7 +364,7 @@ bool TaskListModel::setCompleted(qint64 id, bool completed)
 // leaves it exactly as it was (active). Not undoable by design.
 bool TaskListModel::completeAndRemove(qint64 id)
 {
-    if (!m_repository.deleteTask(id))
+    if (!m_repository.deleteTask(id, QStringLiteral("retention")))
         return reportRepositoryError();
     removeRowsById({id});
     if (m_undo && m_undo->id == id)

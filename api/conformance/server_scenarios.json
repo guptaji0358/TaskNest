@@ -1,0 +1,4837 @@
+{
+  "format": "tasknest-conformance-server/1",
+  "note": "Step format and conventions: see README.md.",
+  "scenarios": [
+    {
+      "id": "create-and-pull",
+      "description": "A creates a task; B pulls it. Pull is state-based and carries the epoch.",
+      "rules": [
+        "SYNC 4.1",
+        "SYNC 5"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1"
+                }
+              }
+            ],
+            "head_seq": 1
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "pull": {
+            "cursor": 0
+          },
+          "expect": {
+            "server_epoch": "epoch-1",
+            "changes": [
+              {
+                "kind": "task",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "rev": 1,
+                "seq": 1,
+                "task": {
+                  "title": "Task 1"
+                }
+              }
+            ],
+            "conflicts": [],
+            "next_cursor": 1,
+            "head_seq": 1,
+            "has_more": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "idempotent-replay",
+      "description": "Replaying an op id returns the stored result, even after the task has changed since.",
+      "rules": [
+        "SYNC 4.0"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              }
+            ],
+            "head_seq": 1
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Changed",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2
+              }
+            ],
+            "head_seq": 2
+          }
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "rev": 1,
+                "seq": 1,
+                "replayed": true
+              }
+            ],
+            "head_seq": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "create-existing-id",
+      "description": "Create of a live id: identical content is a no-op, different content is rejected.",
+      "rules": [
+        "SYNC 4.1"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Different",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "noop",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "rejected",
+                "code": "already_exists",
+                "rev": 1
+              }
+            ],
+            "head_seq": 1
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "id": "update-clean",
+      "description": "An update on the current revision is applied.",
+      "rules": [
+        "SYNC 4.2"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "New",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2,
+                "task": {
+                  "title": "New"
+                }
+              }
+            ],
+            "head_seq": 2
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "id": "merge-different-groups",
+      "description": "Concurrent edits to different field groups both survive.",
+      "rules": [
+        "SYNC 6.1"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "From A",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "priority"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 2,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "merged",
+                "replayed": false,
+                "rev": 3,
+                "seq": 3,
+                "task": {
+                  "title": "From A",
+                  "priority": 2
+                }
+              }
+            ],
+            "head_seq": 3
+          }
+        },
+        {
+          "device": "A",
+          "pull": {
+            "cursor": 2
+          },
+          "expect": {
+            "changes": [
+              {
+                "kind": "task",
+                "rev": 3,
+                "task": {
+                  "title": "From A",
+                  "priority": 2
+                }
+              }
+            ],
+            "conflicts": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "same-group-conflict",
+      "description": "Concurrent edits to the same group: the later arrival wins and the loser is recorded.",
+      "rules": [
+        "SYNC 6.2"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "From A",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "From B",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "conflict_resolved",
+                "replayed": false,
+                "rev": 3,
+                "seq": 3,
+                "task": {
+                  "title": "From B"
+                },
+                "conflicts": [
+                  {
+                    "kind": "field",
+                    "field": "title",
+                    "losing_value": "From A",
+                    "winning_value": "From B",
+                    "losing_device_id": "d0000000-0000-4000-8000-00000000000a",
+                    "winning_device_id": "d0000000-0000-4000-8000-00000000000b",
+                    "task_id": "10000000-0000-4000-8000-000000000001"
+                  }
+                ]
+              }
+            ]
+          },
+          "now": "2026-03-02T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "pull": {
+            "cursor": 2
+          },
+          "expect": {
+            "changes": [
+              {
+                "rev": 3,
+                "task": {
+                  "title": "From B"
+                }
+              }
+            ],
+            "conflicts": [
+              {
+                "kind": "field",
+                "change_seq": 3,
+                "losing_device_id": "d0000000-0000-4000-8000-00000000000a"
+              }
+            ],
+            "next_cursor": 3
+          }
+        }
+      ]
+    },
+    {
+      "id": "convergent-edit-is-noop",
+      "description": "Two devices setting the same value do not conflict and consume no sequence number.",
+      "rules": [
+        "SYNC 6.2"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "priority"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 2,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "priority"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 2,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "noop",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2
+              }
+            ],
+            "head_seq": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "completion-group-is-atomic",
+      "description": "completed and completed_at move together as one group.",
+      "rules": [
+        "SYNC 2.2",
+        "SYNC 6.2"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "completion"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": true,
+                  "completed_at": "2026-03-01T11:00:00.000Z",
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "completion"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "conflict_resolved",
+                "replayed": false,
+                "rev": 3,
+                "seq": 3,
+                "task": {
+                  "completed": false,
+                  "completed_at": null
+                },
+                "conflicts": [
+                  {
+                    "field": "completion",
+                    "losing_value": {
+                      "completed": true,
+                      "completed_at": "2026-03-01T11:00:00.000Z"
+                    },
+                    "winning_value": {
+                      "completed": false,
+                      "completed_at": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "delete-and-tombstone",
+      "description": "A delete on the current revision becomes a content-free tombstone.",
+      "rules": [
+        "SYNC 7.1"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "private",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "reason": "user"
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2,
+                "deleted": true
+              }
+            ],
+            "head_seq": 2
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "pull": {
+            "cursor": 0
+          },
+          "expect": {
+            "changes": [
+              {
+                "kind": "tombstone",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "rev": 2,
+                "seq": 2,
+                "delete_reason": "user",
+                "deleted_at": "2026-03-01T12:00:00.000Z",
+                "task": "$absent",
+                "title": "$absent"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "duplicate-retention-delete",
+      "description": "Two devices purging the same task: the second delete is a no-op.",
+      "rules": [
+        "SYNC 7.2"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "reason": "retention"
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2,
+                "deleted": true
+              }
+            ]
+          }
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "reason": "retention"
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "noop",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2,
+                "deleted": true
+              }
+            ],
+            "head_seq": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "stale-edit-resurrects",
+      "description": "A deliberate edit made before the delete was seen brings the task back, with a conflict record.",
+      "rules": [
+        "SYNC 7.3"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "reason": "user"
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2,
+                "deleted": true
+              }
+            ]
+          },
+          "now": "2026-03-02T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Edited offline",
+                  "notes": "kept",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "resurrected",
+                "replayed": false,
+                "rev": 3,
+                "seq": 3,
+                "task": {
+                  "title": "Edited offline",
+                  "notes": "kept"
+                },
+                "conflicts": [
+                  {
+                    "kind": "edit_over_delete",
+                    "losing_device_id": "d0000000-0000-4000-8000-00000000000a",
+                    "winning_device_id": "d0000000-0000-4000-8000-00000000000b",
+                    "delete_reason": "user",
+                    "deleted_at": "2026-03-02T12:00:00.000Z"
+                  }
+                ]
+              }
+            ]
+          },
+          "now": "2026-03-03T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "pull": {
+            "cursor": 2
+          },
+          "expect": {
+            "changes": [
+              {
+                "kind": "task",
+                "rev": 3,
+                "task": {
+                  "title": "Edited offline"
+                }
+              }
+            ],
+            "conflicts": [
+              {
+                "kind": "edit_over_delete",
+                "change_seq": 3,
+                "losing_device_id": "d0000000-0000-4000-8000-00000000000a"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "stale-delete-loses",
+      "description": "A delete based on an older revision loses to a newer edit (edit wins).",
+      "rules": [
+        "SYNC 7.4"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "B title",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2
+              }
+            ]
+          }
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "reason": "retention"
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "rejected",
+                "code": "edit_won",
+                "rev": 2,
+                "task": {
+                  "title": "B title"
+                },
+                "conflicts": [
+                  {
+                    "kind": "delete_lost_to_edit",
+                    "losing_device_id": "d0000000-0000-4000-8000-00000000000a",
+                    "winning_device_id": "d0000000-0000-4000-8000-00000000000b",
+                    "delete_reason": "retention"
+                  }
+                ]
+              }
+            ],
+            "head_seq": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "create-on-tombstone-rejected",
+      "description": "Presence is not an edit: a create never resurrects a deleted id.",
+      "rules": [
+        "SYNC 7.5"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "reason": "user"
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2,
+                "deleted": true
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "rejected",
+                "code": "already_deleted"
+              }
+            ],
+            "head_seq": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "update-base-rev-rules",
+      "description": "base_rev must not be ahead of the server, nor at or past a tombstone.",
+      "rules": [
+        "SYNC 4.2",
+        "SYNC 7.5"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000002",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000002",
+                  "title": "Task 2",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000002",
+                "base_rev": 1,
+                "reason": "user"
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 2
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 3,
+                "deleted": true
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000004",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 5,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "x",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000005",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000002",
+                "base_rev": 2,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000002",
+                  "title": "y",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "rejected",
+                "code": "invalid_base_rev"
+              },
+              {
+                "status": "rejected",
+                "code": "invalid_base_rev"
+              }
+            ],
+            "head_seq": 3
+          }
+        }
+      ]
+    },
+    {
+      "id": "restore-rules",
+      "description": "Restore (undo, or an explicit keep) needs the tombstone's exact revision.",
+      "rules": [
+        "SYNC 7.6"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "reason": "user"
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 2,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Back",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2,
+                "deleted": true
+              },
+              {
+                "status": "restored",
+                "replayed": false,
+                "rev": 3,
+                "seq": 3,
+                "task": {
+                  "title": "Back"
+                }
+              }
+            ],
+            "head_seq": 3
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000004",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 2,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000005",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 3,
+                "reason": "user"
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000006",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "rejected",
+                "code": "not_deleted",
+                "rev": 3
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 4,
+                "seq": 4,
+                "deleted": true
+              },
+              {
+                "status": "rejected",
+                "code": "invalid_base_rev"
+              }
+            ],
+            "head_seq": 4
+          }
+        }
+      ]
+    },
+    {
+      "id": "unknown-task",
+      "description": "Update, delete and restore of an id the server never saw are rejected.",
+      "rules": [
+        "SYNC 4.2"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000009",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000009",
+                  "title": "x",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000009",
+                "base_rev": 1,
+                "reason": "user"
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000009",
+                "base_rev": 1,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000009",
+                  "title": "Task 9",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "rejected",
+                "code": "unknown_task"
+              },
+              {
+                "status": "rejected",
+                "code": "unknown_task"
+              },
+              {
+                "status": "rejected",
+                "code": "unknown_task"
+              }
+            ],
+            "head_seq": 0
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "id": "validation",
+      "description": "Field limits, trimming and malformed ops. Rejected ops consume no sequence number.",
+      "rules": [
+        "SYNC 3.3"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000002",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000002",
+                  "title": "",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000003",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000003",
+                  "title": "  x  ",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000004",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000004",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000004",
+                  "title": "Task 4",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": "2026-03-01T11:00:00.000Z",
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000005",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000005",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000005",
+                  "title": "Task 5",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 3,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000006",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "n",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000007",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "bogus"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "n",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000008",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "retention",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "n",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000009",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000006",
+                "base_rev": 1,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000006",
+                  "title": "Task 6",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 2,
+                "task": {
+                  "title": "x"
+                }
+              },
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "rejected",
+                "code": "empty_changes"
+              },
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              }
+            ],
+            "head_seq": 2
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "id": "server-clamps",
+      "description": "created_at and completed_at are clamped by the server and reported in adjusted.",
+      "rules": [
+        "SYNC 3.4"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": true,
+                  "completed_at": "2099-01-02T00:00:00.000Z",
+                  "reminder_at": null,
+                  "created_at": "2099-01-01T00:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000002",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000002",
+                  "title": "Task 2",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": true,
+                  "completed_at": "2026-01-01T00:00:00.000Z",
+                  "reminder_at": null,
+                  "created_at": "2026-02-01T00:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1,
+                "adjusted": [
+                  "created_at",
+                  "completed_at"
+                ],
+                "task": {
+                  "created_at": "2026-03-01T12:00:00.000Z",
+                  "completed_at": "2026-03-01T12:00:00.000Z"
+                }
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 2,
+                "adjusted": [
+                  "completed_at"
+                ],
+                "task": {
+                  "created_at": "2026-02-01T00:00:00.000Z",
+                  "completed_at": "2026-02-01T00:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "id": "cleanup-policy-setting",
+      "description": "The account-wide cleanup policy is a synced setting with the same conflict rules.",
+      "rules": [
+        "SYNC 8"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "set_setting",
+                "key": "completed_cleanup_policy",
+                "value": "days:30",
+                "base_rev": 0
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1,
+                "value": "days:30"
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "set_setting",
+                "key": "completed_cleanup_policy",
+                "value": "never",
+                "base_rev": 0
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "conflict_resolved",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2,
+                "value": "never",
+                "conflicts": [
+                  {
+                    "kind": "setting",
+                    "key": "completed_cleanup_policy",
+                    "losing_value": "days:30",
+                    "winning_value": "never",
+                    "losing_device_id": "d0000000-0000-4000-8000-00000000000a",
+                    "winning_device_id": "d0000000-0000-4000-8000-00000000000b"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "set_setting",
+                "key": "completed_cleanup_policy",
+                "value": "days:0",
+                "base_rev": 2
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000004",
+                "type": "set_setting",
+                "key": "other",
+                "value": "never",
+                "base_rev": 2
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000005",
+                "type": "set_setting",
+                "key": "completed_cleanup_policy",
+                "value": "immediately",
+                "base_rev": 9
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "rejected",
+                "code": "invalid_base_rev"
+              }
+            ]
+          }
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000006",
+                "type": "set_setting",
+                "key": "completed_cleanup_policy",
+                "value": "never",
+                "base_rev": 2
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "noop",
+                "replayed": false,
+                "rev": 2,
+                "seq": 2,
+                "value": "never"
+              }
+            ],
+            "head_seq": 2
+          }
+        },
+        {
+          "device": "B",
+          "pull": {
+            "cursor": 0
+          },
+          "expect": {
+            "changes": [
+              {
+                "kind": "setting",
+                "key": "completed_cleanup_policy",
+                "value": "never",
+                "rev": 2,
+                "seq": 2
+              }
+            ],
+            "conflicts": [
+              {
+                "kind": "setting",
+                "change_seq": 2
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "pull-paging",
+      "description": "Pages are contiguous in seq order; has_more is true until the head is reached.",
+      "rules": [
+        "SYNC 5"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000002",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000002",
+                  "title": "Task 2",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000003",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000003",
+                  "title": "Task 3",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000004",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000004",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000004",
+                  "title": "Task 4",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000005",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000005",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000005",
+                  "title": "Task 5",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "head_seq": 5
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "pull": {
+            "cursor": 0,
+            "limit": 2
+          },
+          "expect": {
+            "changes": [
+              {
+                "seq": 1
+              },
+              {
+                "seq": 2
+              }
+            ],
+            "next_cursor": 2,
+            "has_more": true,
+            "head_seq": 5
+          }
+        },
+        {
+          "device": "B",
+          "pull": {
+            "cursor": 2,
+            "limit": 2
+          },
+          "expect": {
+            "changes": [
+              {
+                "seq": 3
+              },
+              {
+                "seq": 4
+              }
+            ],
+            "next_cursor": 4,
+            "has_more": true
+          }
+        },
+        {
+          "device": "B",
+          "pull": {
+            "cursor": 4,
+            "limit": 2
+          },
+          "expect": {
+            "changes": [
+              {
+                "seq": 5
+              }
+            ],
+            "next_cursor": 5,
+            "has_more": false
+          }
+        },
+        {
+          "device": "B",
+          "pull": {
+            "cursor": 5
+          },
+          "expect": {
+            "changes": [],
+            "next_cursor": 5,
+            "has_more": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "pull-is-state-based",
+      "description": "A task changed several times is returned once, at its latest revision.",
+      "rules": [
+        "SYNC 5"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Two",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 2,
+                "origin": "user",
+                "changed": [
+                  "priority"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Two",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 1,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "head_seq": 3
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "pull": {
+            "cursor": 0
+          },
+          "expect": {
+            "changes": [
+              {
+                "kind": "task",
+                "rev": 3,
+                "seq": 3,
+                "task": {
+                  "title": "Two",
+                  "priority": 1
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "account-isolation",
+      "description": "Ids are scoped to the account; another account sees and affects nothing.",
+      "rules": [
+        "SYNC 9"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "C": {
+          "id": "d0000000-0000-4000-8000-00000000000c",
+          "account": "u2"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "C",
+          "pull": {
+            "cursor": 0
+          },
+          "expect": {
+            "changes": [],
+            "head_seq": 0,
+            "next_cursor": 0
+          }
+        },
+        {
+          "device": "C",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Hijack",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "reason": "user"
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "rejected",
+                "code": "unknown_task"
+              },
+              {
+                "status": "rejected",
+                "code": "unknown_task"
+              }
+            ]
+          }
+        },
+        {
+          "device": "C",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000004",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "C's own",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              }
+            ]
+          }
+        },
+        {
+          "device": "A",
+          "pull": {
+            "cursor": 0
+          },
+          "expect": {
+            "changes": [
+              {
+                "task": {
+                  "title": "Task 1"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "batch-partial-failure",
+      "description": "One rejected op does not stop the rest of the batch.",
+      "rules": [
+        "SYNC 4.0"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000002",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000002",
+                  "title": "",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000003",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000003",
+                  "title": "Task 3",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 2
+              }
+            ],
+            "head_seq": 2
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "id": "superseded-conflict-still-delivered",
+      "description": "A resurrection notice reaches a device even if the task changed again before it pulled.",
+      "rules": [
+        "SYNC 5",
+        "SYNC 7.3"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "head_seq": 1
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "reason": "user"
+              }
+            ]
+          },
+          "expect": {
+            "head_seq": 2
+          }
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Edit one",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "resurrected",
+                "replayed": false,
+                "rev": 3,
+                "seq": 3
+              }
+            ]
+          }
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000004",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 3,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Edit two",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 4,
+                "seq": 4
+              }
+            ]
+          }
+        },
+        {
+          "device": "A",
+          "pull": {
+            "cursor": 2
+          },
+          "expect": {
+            "changes": [
+              {
+                "kind": "task",
+                "rev": 4,
+                "seq": 4
+              }
+            ],
+            "next_cursor": 4,
+            "conflicts": [
+              {
+                "kind": "edit_over_delete",
+                "change_seq": 3,
+                "losing_device_id": "d0000000-0000-4000-8000-00000000000a",
+                "winning_device_id": "d0000000-0000-4000-8000-00000000000b"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "ambiguous-partial-batch-replay",
+      "description": "Only the first two operations of a batch committed before the connection dropped; re-sending the identical batch replays them and applies the rest.",
+      "rules": [
+        "SYNC 4.0",
+        "SYNC 4.4"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000002",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000002",
+                  "title": "Task 2",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": false,
+                "seq": 1
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "seq": 2
+              }
+            ],
+            "head_seq": 2
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000002",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000002",
+                  "title": "Task 2",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000003",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000003",
+                  "title": "Task 3",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": true,
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "status": "applied",
+                "replayed": true,
+                "rev": 1,
+                "seq": 2
+              },
+              {
+                "status": "applied",
+                "replayed": false,
+                "rev": 1,
+                "seq": 3
+              }
+            ],
+            "head_seq": 3
+          }
+        },
+        {
+          "device": "B",
+          "pull": {
+            "cursor": 0
+          },
+          "expect": {
+            "changes": [
+              {
+                "seq": 1
+              },
+              {
+                "seq": 2
+              },
+              {
+                "seq": 3
+              }
+            ],
+            "next_cursor": 3,
+            "has_more": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "ambiguous-replay-keeps-newer-change",
+      "description": "The answer to an applied update was lost and another device changed the same field afterwards; the byte-identical replay returns the stored result and changes nothing.",
+      "rules": [
+        "SYNC 4.4"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "head_seq": 1
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "From A",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "rev": 2,
+                "seq": 2
+              }
+            ],
+            "head_seq": 2
+          }
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 2,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "From B",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "rev": 3,
+                "seq": 3
+              }
+            ],
+            "head_seq": 3
+          }
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "From A",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "replayed": true,
+                "rev": 2,
+                "seq": 2,
+                "task": {
+                  "title": "From A"
+                }
+              }
+            ],
+            "head_seq": 3
+          }
+        },
+        {
+          "device": "A",
+          "pull": {
+            "cursor": 0
+          },
+          "expect": {
+            "changes": [
+              {
+                "rev": 3,
+                "task": {
+                  "title": "From B"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "reminted-update-would-overwrite",
+      "description": "Why an unknown-outcome update must never be re-sent under a new op_id: the new copy collides and overwrites the newer value (a conflict is stored, but data moved). Clients reconcile instead (SYNC 11.6).",
+      "rules": [
+        "SYNC 4.4",
+        "SYNC 11.6"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "head_seq": 1
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "From A",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "head_seq": 2
+          }
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 2,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "From B",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "head_seq": 3
+          }
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000004",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "From A",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "conflict_resolved",
+                "replayed": false,
+                "rev": 4,
+                "task": {
+                  "title": "From A"
+                },
+                "conflicts": [
+                  {
+                    "kind": "field",
+                    "field": "title",
+                    "losing_value": "From B",
+                    "winning_value": "From A"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "replay-returns-stored-rejection",
+      "description": "A rejected operation replays as the same rejection even after the state would now accept it.",
+      "rules": [
+        "SYNC 4.0",
+        "SYNC 4.4"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "head_seq": 1
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 3,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Early",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "rejected",
+                "code": "invalid_base_rev",
+                "replayed": false
+              }
+            ]
+          }
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "priority"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 1,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000004",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 2,
+                "origin": "user",
+                "changed": [
+                  "priority"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 2,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "rev": 2
+              },
+              {
+                "rev": 3
+              }
+            ]
+          }
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 3,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Early",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "rejected",
+                "code": "invalid_base_rev",
+                "replayed": true
+              }
+            ],
+            "head_seq": 3
+          }
+        }
+      ]
+    },
+    {
+      "id": "restore-payload-validation",
+      "description": "Restore carries the full task, which is validated like a create; created_at comes from the tombstone; the base must be the current tombstone rev.",
+      "rules": [
+        "SYNC 7.6",
+        "SYNC 3.3",
+        "SYNC 3.4"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "reason": "retention"
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "rev": 1
+              },
+              {
+                "rev": 2,
+                "deleted": true
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 2,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000004",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 2,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000009",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000005",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 2,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": "2026-02-01T00:00:00.000Z",
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000006",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 3,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000007",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000008",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000009",
+                "base_rev": 2,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000009",
+                  "title": "Task 9",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "rejected",
+                "code": "invalid_base_rev"
+              },
+              {
+                "status": "rejected",
+                "code": "invalid_base_rev"
+              },
+              {
+                "status": "rejected",
+                "code": "unknown_task"
+              }
+            ],
+            "head_seq": 2
+          }
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000010",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 2,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Back",
+                  "notes": "full content",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2025-05-05T05:05:05.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "restored",
+                "rev": 3,
+                "seq": 3,
+                "adjusted": [
+                  "created_at"
+                ],
+                "task": {
+                  "title": "Back",
+                  "notes": "full content",
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "now": "2026-03-02T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "pull": {
+            "cursor": 2
+          },
+          "expect": {
+            "changes": [
+              {
+                "kind": "task",
+                "rev": 3,
+                "seq": 3,
+                "task": {
+                  "title": "Back"
+                }
+              }
+            ],
+            "conflicts": []
+          }
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000011",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 2,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Again",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "rejected",
+                "code": "not_deleted",
+                "rev": 3,
+                "task": {
+                  "title": "Back"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000012",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 3,
+                "reason": "user"
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000013",
+                "type": "restore",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 3,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Stale",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "rev": 4,
+                "deleted": true
+              },
+              {
+                "status": "rejected",
+                "code": "invalid_base_rev"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "resurrect-validation-and-revs",
+      "description": "A resurrecting update is validated in full, keeps created_at from the tombstone, and revisions only ever increase.",
+      "rules": [
+        "SYNC 7.3",
+        "SYNC 3.3",
+        "SYNC 1"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "reason": "user"
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "rev": 1
+              },
+              {
+                "rev": 2,
+                "deleted": true
+              }
+            ]
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 9,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000004",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000002",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000005",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 3,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000006",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 2,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000007",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": "2026-01-02T00:00:00.000Z",
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              },
+              {
+                "status": "rejected",
+                "code": "invalid_base_rev"
+              },
+              {
+                "status": "rejected",
+                "code": "invalid_base_rev"
+              },
+              {
+                "status": "rejected",
+                "code": "validation_failed"
+              }
+            ],
+            "head_seq": 2
+          }
+        },
+        {
+          "device": "B",
+          "pull": {
+            "cursor": 0
+          },
+          "expect": {
+            "changes": [
+              {
+                "kind": "tombstone",
+                "rev": 2,
+                "seq": 2,
+                "title": "$absent",
+                "task": "$absent"
+              }
+            ]
+          }
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000008",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Edited",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2025-01-01T00:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "resurrected",
+                "rev": 3,
+                "seq": 3,
+                "adjusted": [
+                  "created_at"
+                ],
+                "task": {
+                  "title": "Edited",
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "now": "2026-03-02T12:00:00.000Z"
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000009",
+                "type": "delete",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 3,
+                "reason": "retention"
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "applied",
+                "rev": 4,
+                "deleted": true
+              }
+            ]
+          }
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000010",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 3,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Second",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "status": "resurrected",
+                "rev": 5
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "pull-superseded-between-pages",
+      "description": "An entity delivered on page one and changed before page two is delivered again at its higher seq; nothing is missed and the last page ends at head_seq.",
+      "rules": [
+        "SYNC 5.1",
+        "SYNC 5.2"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000002",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000002",
+                  "title": "Task 2",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              },
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000003",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000003",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000003",
+                  "title": "Task 3",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "head_seq": 3
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "pull": {
+            "cursor": 0,
+            "limit": 2
+          },
+          "expect": {
+            "changes": [
+              {
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "rev": 1,
+                "seq": 1
+              },
+              {
+                "task_id": "10000000-0000-4000-8000-000000000002",
+                "seq": 2
+              }
+            ],
+            "next_cursor": 2,
+            "has_more": true,
+            "head_seq": 3
+          }
+        },
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000004",
+                "type": "update",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": 1,
+                "origin": "user",
+                "changed": [
+                  "title"
+                ],
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Changed",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "head_seq": 4
+          }
+        },
+        {
+          "device": "B",
+          "pull": {
+            "cursor": 2,
+            "limit": 2
+          },
+          "expect": {
+            "changes": [
+              {
+                "task_id": "10000000-0000-4000-8000-000000000003",
+                "seq": 3
+              },
+              {
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "rev": 2,
+                "seq": 4,
+                "task": {
+                  "title": "Changed"
+                }
+              }
+            ],
+            "next_cursor": 4,
+            "has_more": false,
+            "head_seq": 4
+          }
+        }
+      ]
+    },
+    {
+      "id": "pull-cursor-rules",
+      "description": "A push result never moves the pull cursor; an empty page ends at head_seq; a cursor ahead of the server is refused with cursor_ahead.",
+      "rules": [
+        "SYNC 5.1",
+        "SYNC 5.2"
+      ],
+      "devices": {
+        "A": {
+          "id": "d0000000-0000-4000-8000-00000000000a"
+        },
+        "B": {
+          "id": "d0000000-0000-4000-8000-00000000000b"
+        }
+      },
+      "steps": [
+        {
+          "device": "A",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000001",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000001",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000001",
+                  "title": "Task 1",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "seq": 1
+              }
+            ],
+            "head_seq": 1
+          },
+          "now": "2026-03-01T12:00:00.000Z"
+        },
+        {
+          "device": "B",
+          "push": {
+            "ops": [
+              {
+                "op_id": "e0000000-0000-4000-8000-000000000002",
+                "type": "create",
+                "task_id": "10000000-0000-4000-8000-000000000002",
+                "base_rev": null,
+                "task": {
+                  "id": "10000000-0000-4000-8000-000000000002",
+                  "title": "Task 2",
+                  "notes": "",
+                  "list_name": "Inbox",
+                  "priority": 0,
+                  "due_at": null,
+                  "completed": false,
+                  "completed_at": null,
+                  "reminder_at": null,
+                  "created_at": "2026-01-01T10:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "expect": {
+            "results": [
+              {
+                "seq": 2
+              }
+            ],
+            "head_seq": 2
+          }
+        },
+        {
+          "device": "A",
+          "pull": {
+            "cursor": 0
+          },
+          "expect": {
+            "changes": [
+              {
+                "seq": 1
+              },
+              {
+                "seq": 2
+              }
+            ],
+            "next_cursor": 2,
+            "has_more": false,
+            "head_seq": 2
+          }
+        },
+        {
+          "device": "A",
+          "pull": {
+            "cursor": 2
+          },
+          "expect": {
+            "changes": [],
+            "next_cursor": 2,
+            "has_more": false
+          }
+        },
+        {
+          "device": "A",
+          "pull": {
+            "cursor": 7
+          },
+          "expect": {
+            "http_status": 409,
+            "error": {
+              "code": "cursor_ahead"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

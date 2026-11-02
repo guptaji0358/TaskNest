@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 
 // Text button with an optional leading icon.
-// variant: primary (solid lime) | tonal (soft lime) | secondary | ghost | success | danger
+// variant: primary (solid accent) | tonal (soft accent) | secondary | ghost | success | danger
 Button {
     id: control
 
@@ -103,7 +103,7 @@ Button {
             case "primary":
                 return down ? Theme.accentPressed : over ? Theme.accentHover : Theme.accent
             case "tonal":
-                return down ? Theme.accentLine : over ? Qt.rgba(0.722, 0.949, 0.235, 0.22) : Theme.accentSoft
+                return down ? Theme.accentLine : over ? Theme.accentSoftHover : Theme.accentSoft
             case "success":
                 return down || over ? Theme.successLine : Theme.successSoft
             case "danger":

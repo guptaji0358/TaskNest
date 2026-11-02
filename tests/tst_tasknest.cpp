@@ -14,6 +14,7 @@
 #include "task.h"
 #include "tasklistmodel.h"
 #include "taskrepository.h"
+#include "shortcutmanager.h"
 #include "testprofile.h"
 #include "widgetcontroller.h"
 
@@ -488,11 +489,11 @@ private slots:
         {
             Database db;
             QVERIFY2(db.initialize(file), qPrintable(db.lastError()));
-            QCOMPARE(db.schemaVersion(), 3);
+            QCOMPARE(db.schemaVersion(), 4);
         }
-        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 3);
+        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 4);
         QCOMPARE(scalar(file, "SELECT value FROM app_metadata WHERE key='schema_version'").toString(),
-                 QString("3"));
+                 QString("4"));
         QCOMPARE(scalar(file, "SELECT COUNT(*) FROM sqlite_master WHERE name='tasks'").toInt(), 1);
         QCOMPARE(scalar(file, "SELECT COUNT(*) FROM tasks").toInt(), 0);
     }
@@ -507,11 +508,11 @@ private slots:
         {
             Database db;
             QVERIFY2(db.initialize(file), qPrintable(db.lastError()));
-            QCOMPARE(db.schemaVersion(), 3);
+            QCOMPARE(db.schemaVersion(), 4);
         }
-        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 3);
+        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 4);
         QCOMPARE(scalar(file, "SELECT value FROM app_metadata WHERE key='schema_version'").toString(),
-                 QString("3"));
+                 QString("4"));
         QCOMPARE(scalar(file, "SELECT value FROM app_metadata WHERE key='marker'").toString(),
                  QString("keep me"));
         QCOMPARE(scalar(file, "SELECT n FROM user_notes").toString(), QString("precious"));
@@ -548,7 +549,7 @@ private slots:
         Database db;
         QVERIFY(db.initialize(path("twice.db")));
         QVERIFY(db.initialize(path("twice.db")));
-        QCOMPARE(db.schemaVersion(), 3);
+        QCOMPARE(db.schemaVersion(), 4);
     }
 
     void migration_failureRollsBackCompletely()
@@ -616,13 +617,13 @@ private slots:
         {
             Database db;
             QVERIFY2(db.initialize(file), qPrintable(db.lastError()));
-            QCOMPARE(db.schemaVersion(), 3);
+            QCOMPARE(db.schemaVersion(), 4);
         }
         const QString backup = file + ".v1.bak";
         QVERIFY(QFile::exists(backup));
         QCOMPARE(fileHash(backup), original);                          // byte-identical
         QCOMPARE(scalar(backup, "PRAGMA user_version").toInt(), 1);    // still the old schema
-        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 3);
+        QCOMPARE(scalar(file, "PRAGMA user_version").toInt(), 4);
 
         // a database that is already current is never backed up again
         const QByteArray backupBefore = fileHash(backup);
@@ -2300,7 +2301,7 @@ private slots:
         }
         // other metadata survived
         QCOMPARE(scalar(file, "SELECT value FROM app_metadata WHERE key='schema_version'").toString(),
-                 QString("3"));
+                 QString("4"));
     }
 
     void cleanup_removedTaskCannotBeUndoneOrResurrected()
@@ -4170,6 +4171,46 @@ private slots:
                                         QStringLiteral("WinExec")})
                 QVERIFY2(!src.contains(word), qPrintable(name + " starts a process via " + word));
         }
+    }
+
+    void shortcuts_startWithWindowsIsRefusedInATestProfileAndStartsHidden()
+    {
+        ShortcutManager manager;
+        TestProfile::Profile profile;
+        profile.requested = true;
+        profile.active = true;
+        manager.setTestProfile(profile);
+        QVERIFY(!manager.startWithWindows());
+        QVERIFY(!manager.setStartWithWindows(true)); // never touches the real Run key
+        QVERIFY(!manager.startWithWindows());
+        QVERIFY(!manager.lastError().isEmpty());
+        QVERIFY(ShortcutManager::startupCommand().endsWith(QStringLiteral(" --background")));
+        QVERIFY(ShortcutManager::startupCommand().startsWith(QLatin1Char('"')));
+    }
+
+    void widget_runInBackgroundDefaultsOffAndPersists()
+    {
+        const QString file = path(QStringLiteral("run_in_background.db"));
+        auto session = [&file](const std::function<void(WidgetController &)> &body) {
+            Database db;
+            QVERIFY(db.initialize(file));
+            TaskRepository repo(db);
+            TaskListModel model(repo);
+            WidgetController widget(model, repo);
+            QVERIFY(widget.load());
+            body(widget);
+        };
+        session([](WidgetController &w) {
+            QVERIFY(!w.runInBackground()); // default: closing quits
+            w.setRunInBackground(true);
+            QVERIFY(w.flush());
+        });
+        session([](WidgetController &w) {
+            QVERIFY(w.runInBackground()); // survived the restart
+            w.setRunInBackground(false);
+            QVERIFY(w.flush());
+        });
+        session([](WidgetController &w) { QVERIFY(!w.runInBackground()); });
     }
 
     void widget_reduceMotionDefaultsOffAndPersists()

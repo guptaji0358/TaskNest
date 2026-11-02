@@ -3,6 +3,7 @@
 #include <QGuiApplication>
 #include <QIcon>
 #include <QQmlApplicationEngine>
+#include <QQmlEngine>
 #include <QQuickStyle>
 #include <QTimer>
 
@@ -22,11 +23,14 @@
 #include "testprofile.h"
 #include "taskrepository.h"
 #include "widgetcontroller.h"
+#include "windowchrome.h"
 
 int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("TaskNest"));
+    // Main.qml decides when the application ends (quit, or hide to the tray).
+    app.setQuitOnLastWindowClosed(false);
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/tasknest-256.png")));
     // Basic is the neutral base for the custom TaskNest controls (see Theme.qml).
     QQuickStyle::setStyle(QStringLiteral("Basic"));
@@ -69,8 +73,12 @@ int main(int argc, char *argv[])
             delivered = SingleInstanceGuard::sendDataToProcess(
                 instanceGuard.ownerPid(), DeepLinkRouter::kCopyDataId, payload);
         }
-        if (!delivered || startupLink.isEmpty())
-            SingleInstanceGuard::activateWindowOfProcess(instanceGuard.ownerPid());
+        if (!delivered || startupLink.isEmpty()) {
+            // A visible window is raised directly; one hidden to the tray is asked to show itself.
+            if (!SingleInstanceGuard::activateWindowOfProcess(instanceGuard.ownerPid()))
+                SingleInstanceGuard::sendDataToProcess(instanceGuard.ownerPid(),
+                                                       DeepLinkRouter::kShowWindowId, QByteArray());
+        }
         return 0;
     }
 
@@ -144,6 +152,13 @@ int main(int argc, char *argv[])
         reminders.reschedule(); // announces overdue reminders, arms the timer
     }
 
+    // Started by the Windows Run entry: begin hidden in the tray, but only when
+    // the user chose to keep running in the background; otherwise show the
+    // window as usual so there is always a way in.
+    const bool startHidden = startupError.isEmpty()
+                             && app.arguments().contains(QLatin1String(ShortcutManager::kBackgroundArgument))
+                             && widget.runInBackground();
+
     // Honor Windows "Show animations in Windows" being switched off.
     bool reducedMotion = false;
 #ifdef Q_OS_WIN
@@ -152,6 +167,7 @@ int main(int argc, char *argv[])
         reducedMotion = !animationsOn;
 #endif
 
+    qmlRegisterType<WindowChrome>("TaskNest", 1, 0, "WindowChrome");
     QQmlApplicationEngine engine;
     QQmlEngine::setObjectOwnership(&taskModel, QQmlEngine::CppOwnership);
     QQmlEngine::setObjectOwnership(&reminders, QQmlEngine::CppOwnership);
@@ -175,6 +191,7 @@ int main(int argc, char *argv[])
         {QStringLiteral("databaseError"), startupError},
         {QStringLiteral("databasePath"), QDir::toNativeSeparators(database.databasePath())},
         {QStringLiteral("reducedMotion"), reducedMotion},
+        {QStringLiteral("startHidden"), startHidden},
         {QStringLiteral("widgetController"),
          QVariant::fromValue<QObject *>(startupError.isEmpty() ? &widget : nullptr)},
         {QStringLiteral("reminderScheduler"),

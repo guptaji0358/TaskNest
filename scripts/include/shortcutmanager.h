@@ -21,6 +21,9 @@ class ShortcutManager : public QObject
     Q_PROPERTY(bool startMenuShortcut READ startMenuShortcut NOTIFY changed)
     Q_PROPERTY(bool taskbarPinned READ taskbarPinned NOTIFY changed)
     Q_PROPERTY(bool supported READ supported CONSTANT)
+    // Whether Windows starts TaskNest (hidden in the tray) when the user signs in.
+    // A per-user Run entry that exists only while this is on.
+    Q_PROPERTY(bool startWithWindows READ startWithWindows NOTIFY changed)
     // Whether Windows is set to open tasknest:// links with this executable.
     Q_PROPERTY(bool linksRegistered READ linksRegistered NOTIFY changed)
     // Whether Chrome/Edge are set up to reach TaskNest's native host.
@@ -33,6 +36,7 @@ public:
     bool startMenuShortcut() const;
     bool taskbarPinned() const;
     bool linksRegistered() const;
+    bool startWithWindows() const;
     bool browserHostRegistered() const;
 
     // Creates (replacing a stale one) or removes the shortcut. False on
@@ -41,6 +45,9 @@ public:
     // Cannot pin silently: ensures the shortcut and reveals it. Returns the
     // text to show the user (empty on failure; see lastError()).
     Q_INVOKABLE QString requestTaskbarPin();
+    // Adds / removes the HKCU Run entry (`"<exe>" --background`). Refused in a
+    // test profile.
+    Q_INVOKABLE bool setStartWithWindows(bool enabled);
     // Registers / removes the tasknest:// handler under HKEY_CURRENT_USER.
     Q_INVOKABLE bool setLinksRegistered(bool enabled);
     // Registers / removes the Chrome and Edge native-messaging host
@@ -54,6 +61,10 @@ public:
     // the profile's own registry subtree and folder; per-user shortcuts and the
     // tasknest:// scheme, which have no scratch equivalent, are refused.
     void setTestProfile(const TestProfile::Profile &profile) { m_profile = profile; }
+
+    // Command-line flag the Run entry passes: start hidden in the tray.
+    static constexpr const char *kBackgroundArgument = "--background";
+    static QString startupCommand();
 
     // Overridable for tests.
     static QString startMenuShortcutPath();

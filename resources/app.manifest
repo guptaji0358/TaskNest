@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Lets TaskNest.exe and TaskNestHost.exe load the Qt/MinGW DLLs from out/bin/runtime
+     (a private side-by-side assembly, see runtime_manifest.cmake). -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="runtime" version="1.0.0.0" processorArchitecture="amd64"/>
+    </dependentAssembly>
+  </dependency>
+</assembly>
