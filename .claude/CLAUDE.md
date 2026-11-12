@@ -1,5 +1,13 @@
 # CLAUDE.md — TaskNest
 
+## Project memory (read first)
+
+- Memory lives in `.claude/memory/`; start with [index](memory/index.md).
+- Before broad source inspection, read the index and only the memory files relevant to the task.
+- Memory is a map, not truth: verify against source before relying on it, and correct memory that conflicts with code.
+- After meaningful codebase changes (modules, interfaces, build/test steps, conventions, decisions), update the affected memory files and the index.
+- Every memory Markdown file must stay at or under 200 lines.
+
 Guidance for Claude and contributors. Inspect existing code and docs before changing anything. Detail lives in the code and in `INTEGRATION.md` (local API, deep links, browser capture), `CLOUD.md` (cloud decisions/roadmap), `api/SYNC.md` and `api/openapi.yaml` (sync protocol); keep those in step with the code.
 
 ## Purpose
