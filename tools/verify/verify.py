@@ -3,8 +3,8 @@
     python tools/verify/verify.py [--list] [--only GROUPS|group.id,...] [--full]
                                   [--json] [--milestone M2.0]
 
-Read-only: this phase writes nothing to disk and runs no real checks yet. Groups
-that are not implemented are reported NOT RUN, never PASS.
+Read-only: writes nothing to disk. Implemented groups: contract, m1. Groups that are
+not implemented yet are reported NOT RUN, never PASS.
 Exit codes: 0 no FAIL/INCOMPLETE/NOT RUN; 1 any FAIL; 2 usage error, missing repo
 root, or any INCOMPLETE / NOT RUN without a FAIL.
 """
@@ -17,7 +17,9 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True  # keep __pycache__ out of tools/verify/
 
-import core  # noqa: E402  (sibling module; the script directory is on sys.path)
+import checks_contract  # noqa: E402  (sibling modules; the script directory is on sys.path)
+import checks_m1  # noqa: E402
+import core  # noqa: E402
 import repo  # noqa: E402
 
 DEFAULT_MILESTONE = "M2.0"
@@ -25,17 +27,17 @@ MILESTONE_RE = re.compile(r"^M\d+(\.\d+)*$")
 
 # Groups in the approved design that are not implemented in this phase.
 PENDING_GROUPS = (
-    ("contract", "not implemented in Step 3.1"),
-    ("git", "not implemented in Step 3.1"),
-    ("m1", "not implemented in Step 3.1"),
-    ("memory", "not implemented in Step 3.1"),
-    ("server", "not implemented in Step 3.1"),
+    ("git", "not implemented yet"),
+    ("memory", "not implemented yet"),
+    ("server", "not implemented yet"),
 )
 
 MILESTONE_NOTE = ("milestone recorded only; milestone configuration and approval checks "
                   "are not implemented in Step 3.1")
 
-DEFAULT_REGISTRY = core.Registry()  # no checks registered in this phase
+DEFAULT_REGISTRY = core.Registry()
+checks_contract.register(DEFAULT_REGISTRY)
+checks_m1.register(DEFAULT_REGISTRY)
 
 
 class _Parser(argparse.ArgumentParser):

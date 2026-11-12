@@ -20,12 +20,13 @@ def passing_registry():
 
 
 def test_default_run_reports_every_group_not_run_and_exits_2(capsys, fake_repo):
-    code, out, _ = run_main(capsys, [], start=fake_repo)
+    code, out, _ = run_main(capsys, [], start=fake_repo, registry=core.Registry())
     assert code == core.EXIT_USAGE_OR_INCOMPLETE
+    n = len(verify.PENDING_GROUPS)
     for group, _reason in verify.PENDING_GROUPS:
         assert f"[NOT RUN] {group}.pending" in out
     assert "PASS" not in out.split("completed |")[0].replace("PASS 0", "")  # no fabricated PASS lines
-    assert "0/5 completed | PASS 0, FAIL 0, SKIP 0, INCOMPLETE 0, NOT RUN 5" in out
+    assert f"0/{n} completed | PASS 0, FAIL 0, SKIP 0, INCOMPLETE 0, NOT RUN {n}" in out
 
 
 def test_all_pass_exits_0(capsys, fake_repo):
@@ -41,20 +42,22 @@ def test_failing_check_exits_1(capsys, fake_repo):
 
 
 def test_json_output_is_valid_deterministic_and_includes_milestone(capsys, fake_repo):
-    code, first, _ = run_main(capsys, ["--json"], start=fake_repo)
-    _, second, _ = run_main(capsys, ["--json"], start=fake_repo)
+    code, first, _ = run_main(capsys, ["--json"], start=fake_repo, registry=core.Registry())
+    _, second, _ = run_main(capsys, ["--json"], start=fake_repo, registry=core.Registry())
     assert code == core.EXIT_USAGE_OR_INCOMPLETE and first == second
     data = json.loads(first)
     assert data["milestone"] == "M2.0"
-    assert data["summary"]["counts"]["NOT RUN"] == 5 and data["summary"]["counts"]["PASS"] == 0
-    assert [x["id"] for x in data["results"]] == ["pending"] * 5
+    n = len(verify.PENDING_GROUPS)
+    assert data["summary"]["counts"]["NOT RUN"] == n and data["summary"]["counts"]["PASS"] == 0
+    assert [x["id"] for x in data["results"]] == ["pending"] * n
     assert [x["group"] for x in data["results"]] == sorted(g for g, _ in verify.PENDING_GROUPS)
 
 
 def test_list_runs_nothing_and_exits_0(capsys):
     code, out, _ = run_main(capsys, ["--list"])
     assert code == core.EXIT_OK
-    assert "git.pending [pending]" in out and out.strip().endswith("5 planned")
+    assert "git.pending [pending]" in out and out.strip().endswith(f"{len(verify.DEFAULT_REGISTRY.specs()) + len(verify.PENDING_GROUPS)} planned")
+    assert "contract.refs_resolve [implemented]" in out and "m1.live_tables [implemented]" in out
 
 
 def test_list_json(capsys):
@@ -64,8 +67,10 @@ def test_list_json(capsys):
 
 
 def test_only_filters_and_unknown_selector_is_usage_error(capsys, fake_repo):
+    code, out, _ = run_main(capsys, ["--only", "git"], start=fake_repo)
+    assert "git.pending" in out and "m1." not in out and "0/1 completed" in out
     code, out, _ = run_main(capsys, ["--only", "m1"], start=fake_repo)
-    assert "m1.pending" in out and "git.pending" not in out and "0/1 completed" in out
+    assert "m1.live_tables" in out and "git.pending" not in out and "contract." not in out
     code, _, err = run_main(capsys, ["--only", "bogus"], start=fake_repo)
     assert code == core.EXIT_USAGE_OR_INCOMPLETE and "unknown check or group: bogus" in err
     code, _, err = run_main(capsys, ["--only", "m1,"], start=fake_repo)
