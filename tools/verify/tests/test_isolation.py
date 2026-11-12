@@ -16,7 +16,7 @@ import pytest
 import core
 import fs_snapshot as fs
 
-TOOL_FILES = ("verify.py", "core.py", "repo.py")
+TOOL_FILES = ("verify.py", "core.py", "repo.py", "gitro.py", "sqlro.py")
 VERIFY_DIR = Path(__file__).resolve().parents[1]
 
 
