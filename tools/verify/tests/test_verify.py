@@ -56,7 +56,7 @@ def test_json_output_is_valid_deterministic_and_includes_milestone(capsys, fake_
 def test_list_runs_nothing_and_exits_0(capsys):
     code, out, _ = run_main(capsys, ["--list"])
     assert code == core.EXIT_OK
-    assert "git.pending [pending]" in out and out.strip().endswith(f"{len(verify.DEFAULT_REGISTRY.specs()) + len(verify.PENDING_GROUPS)} planned")
+    assert "memory.pending [pending]" in out and out.strip().endswith(f"{len(verify.DEFAULT_REGISTRY.specs()) + len(verify.PENDING_GROUPS)} planned")
     assert "contract.refs_resolve [implemented]" in out and "m1.live_tables [implemented]" in out
 
 
@@ -67,10 +67,10 @@ def test_list_json(capsys):
 
 
 def test_only_filters_and_unknown_selector_is_usage_error(capsys, fake_repo):
-    code, out, _ = run_main(capsys, ["--only", "git"], start=fake_repo)
-    assert "git.pending" in out and "m1." not in out and "0/1 completed" in out
+    code, out, _ = run_main(capsys, ["--only", "memory"], start=fake_repo)
+    assert "memory.pending" in out and "m1." not in out and "0/1 completed" in out
     code, out, _ = run_main(capsys, ["--only", "m1"], start=fake_repo)
-    assert "m1.live_tables" in out and "git.pending" not in out and "contract." not in out
+    assert "m1.live_tables" in out and "memory.pending" not in out and "contract." not in out
     code, _, err = run_main(capsys, ["--only", "bogus"], start=fake_repo)
     assert code == core.EXIT_USAGE_OR_INCOMPLETE and "unknown check or group: bogus" in err
     code, _, err = run_main(capsys, ["--only", "m1,"], start=fake_repo)
@@ -96,7 +96,7 @@ def test_invalid_milestone_is_usage_error(capsys, fake_repo, value):
 def test_valid_milestone_is_recorded_and_not_validated(capsys, fake_repo):
     _, out, _ = run_main(capsys, ["--milestone", "M9.1.2", "--json"], start=fake_repo)
     data = json.loads(out)
-    assert data["milestone"] == "M9.1.2" and "not implemented" in data["milestone_note"]
+    assert data["milestone"] == "M9.1.2" and "never from the branch name" in data["milestone_note"]
 
 
 def test_unknown_argument_is_usage_error(capsys):

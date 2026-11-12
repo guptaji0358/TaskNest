@@ -2,9 +2,10 @@
 
     python tools/verify/verify.py [--list] [--only GROUPS|group.id,...] [--full]
                                   [--json] [--milestone M2.0]
+                                  [--baseline | --baseline-save [--force]]
 
-Read-only: writes nothing to disk. Implemented groups: contract, m1. Groups that are
-not implemented yet are reported NOT RUN, never PASS.
+Read-only, except an explicit --baseline-save, which writes only out/verify/baseline.json.
+Implemented groups: contract, m1, git. Groups that are not implemented yet are reported NOT RUN, never PASS.
 Exit codes: 0 no FAIL/INCOMPLETE/NOT RUN; 1 any FAIL; 2 usage error, missing repo
 root, or any INCOMPLETE / NOT RUN without a FAIL.
 """
@@ -17,6 +18,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True  # keep __pycache__ out of tools/verify/
 
+import checks_git  # noqa: E402
 import checks_contract  # noqa: E402  (sibling modules; the script directory is on sys.path)
 import checks_m1  # noqa: E402
 import core  # noqa: E402
@@ -27,17 +29,17 @@ MILESTONE_RE = re.compile(r"^M\d+(\.\d+)*$")
 
 # Groups in the approved design that are not implemented in this phase.
 PENDING_GROUPS = (
-    ("git", "not implemented yet"),
     ("memory", "not implemented yet"),
     ("server", "not implemented yet"),
 )
 
-MILESTONE_NOTE = ("milestone recorded only; milestone configuration and approval checks "
-                  "are not implemented in Step 3.1")
+MILESTONE_NOTE = ("milestone selects the scope rules in tools/verify/milestones.json; approval comes only "
+                  "from that file, never from the branch name")
 
 DEFAULT_REGISTRY = core.Registry()
 checks_contract.register(DEFAULT_REGISTRY)
 checks_m1.register(DEFAULT_REGISTRY)
+checks_git.register(DEFAULT_REGISTRY)
 
 
 class _Parser(argparse.ArgumentParser):
@@ -54,6 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="machine-readable output on stdout")
     parser.add_argument("--milestone", default=DEFAULT_MILESTONE, metavar="ID",
                         help=f"milestone label (default {DEFAULT_MILESTONE})")
+    parser.add_argument("--baseline", action="store_true",
+                        help="attribute changes against the saved out/verify/baseline.json")
+    parser.add_argument("--baseline-save", action="store_true",
+                        help="save the current git state to out/verify/baseline.json, then exit")
+    parser.add_argument("--force", action="store_true", help="with --baseline-save: overwrite an existing baseline")
     return parser
 
 
@@ -74,6 +81,12 @@ def main(argv: list[str] | None = None, *, start: Path | str | None = None,
 
     if not MILESTONE_RE.match(args.milestone):
         return _usage_error(f"invalid --milestone value: {args.milestone!r} (expected e.g. M2.0)")
+    if args.force and not args.baseline_save:
+        return _usage_error("--force is only valid with --baseline-save")
+    if args.baseline_save and (args.baseline or args.only or args.list or args.json or args.full):
+        return _usage_error("--baseline-save cannot be combined with --baseline, --only, --list, --json or --full")
+    if args.baseline_save:
+        return _baseline_save(args.force, start)
     try:
         selectors = core.parse_only(args.only)
         plan = core.build_plan(registry, selectors, args.full, pending)
@@ -87,7 +100,7 @@ def main(argv: list[str] | None = None, *, start: Path | str | None = None,
         root = repo.find_root(start if start is not None else Path(__file__).parent)
     except repo.RepoNotFound as exc:
         return _usage_error(str(exc))
-    ctx = repo.Ctx(root=root, milestone=args.milestone)
+    ctx = repo.Ctx(root=root, milestone=args.milestone, baseline=args.baseline)
 
     results = core.run_plan(plan, ctx)
     if args.json:
@@ -97,6 +110,18 @@ def main(argv: list[str] | None = None, *, start: Path | str | None = None,
         print(core.format_human(results, plan.planned,
                                 (f"milestone: {args.milestone} ({MILESTONE_NOTE})",)))
     return core.exit_code(results)
+
+
+def _baseline_save(force: bool, start) -> int:
+    try:
+        root = repo.find_root(start if start is not None else Path(__file__).parent)
+    except repo.RepoNotFound as exc:
+        return _usage_error(str(exc))
+    ok, message = checks_git.save_baseline(root, force)
+    if not ok:
+        return _usage_error(message)
+    print(message)
+    return core.EXIT_OK
 
 
 def _print_list(plan: core.Plan, as_json: bool) -> int:

@@ -1,0 +1,35 @@
+{
+  "format": "tasknest-verify-milestones/1",
+  "default": "M2.0",
+  "milestones": {
+    "M2.0": {
+      "approved": true,
+      "allowed_paths_status": "proposed",
+      "description": "Server skeleton, documentation step only (CLAUDE.md: M2.0 is the only approved step so far). allowed_paths are PROPOSED until the owner confirms the exact list.",
+      "allowed_paths": [
+        "CLOUD.md",
+        "server/README.md",
+        ".claude/memory/**",
+        ".claude/reports/**",
+        "tools/verify/**"
+      ],
+      "forbidden_imports": [
+        "sqlalchemy", "alembic", "psycopg", "psycopg2", "asyncpg", "argon2", "jwt", "jose"
+      ]
+    },
+    "M2.1": {
+      "approved": false,
+      "allowed_paths_status": "proposed",
+      "description": "Not approved. Listed so that selecting it yields INCOMPLETE rather than a verdict.",
+      "allowed_paths": [],
+      "forbidden_imports": []
+    },
+    "M3": {
+      "approved": false,
+      "allowed_paths_status": "proposed",
+      "description": "Not approved. Sync tables and endpoints belong here (CLAUDE.md); nothing is allowed yet.",
+      "allowed_paths": [],
+      "forbidden_imports": []
+    }
+  }
+}
