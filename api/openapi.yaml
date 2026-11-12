@@ -84,12 +84,32 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Invalid" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
 
   /v1/auth/login:
     post:
       tags: [auth]
       operationId: login
       summary: Sign in. Always creates a fresh device record.
+      description: |
+        The password is verified first, against the stored hash, outside any
+        database lock or open transaction (a wrong password is `401` with no
+        device information). The server then locks the user's row and re-reads
+        the hash under that lock; only if it is the hash that was verified is a
+        session created, which serializes sign-in against a concurrent password
+        change. If the hash changed, the server releases the lock, verifies once
+        more with a fresh hashing permit (same 2-second wait limit) outside any
+        lock, and a second change answers `503 server_busy`. Only after a
+        successful verification, at 25 active devices, the sign-in is
+        refused with `409 device_limit_reached` (`details` is exactly `limit`
+        and `active`, both 25, with no device list) unless `replace_device_id`
+        names one of the caller's active devices. That device's family row is
+        locked after the user row, ownership and active status are rechecked
+        under that lock, and the device is revoked and replaced in the same
+        transaction (`replaced_device_id` in the response). A missing, unknown,
+        inactive or foreign `replace_device_id` gets the identical 409; there is
+        no 404. Below the limit `replace_device_id` is ignored and nothing is
+        revoked.
       security: []
       requestBody:
         required: true
@@ -103,14 +123,32 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AuthResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/DeviceLimit" }
+        "422": { $ref: "#/components/responses/Invalid" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
 
   /v1/auth/refresh:
     post:
       tags: [auth]
       operationId: refreshToken
       summary: Exchange a refresh token for a new pair (rotation).
-      description: Reuse of an already-rotated refresh token revokes the whole token family.
+      description: |
+        Rotates on every success; the raw successor is returned once and cannot
+        be recovered. `operation_id` is a client-generated UUID, reused only to
+        retry that exact request. Evaluated in this order, first match wins:
+        (1) unknown token, or revoked or expired family: 401, no change;
+        (2) rotated token with the same `operation_id`: 409 `refresh_superseded`,
+        no change, the family is not revoked (sign in again);
+        (3) rotated token with a different `operation_id`: the family is revoked
+        and 401 is returned;
+        (4) latest token whose `operation_id` was already used by another token
+        of the same family: 401, no change;
+        (5) latest token with an unused `operation_id`: at most six successful
+        rotations per family in any rolling 15 minutes (a rotation exactly 15
+        minutes old no longer counts), otherwise 429 with Retry-After and no
+        change; if permitted, rotate. Earlier access tokens stay valid until
+        their own expiry.
       security: []
       requestBody:
         required: true
@@ -124,7 +162,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TokenPair" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/RefreshSuperseded" }
+        "422": { $ref: "#/components/responses/Invalid" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
 
   /v1/auth/logout:
     post:
@@ -134,6 +175,7 @@ paths:
       responses:
         "204": { description: Signed out. }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
 
   /v1/auth/recover:
     post:
@@ -154,6 +196,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/Invalid" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
 
   /v1/auth/recovery-codes:
     post:
@@ -173,6 +216,7 @@ paths:
               schema: { $ref: "#/components/schemas/RecoveryCodes" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
 
   /v1/auth/password:
     post:
@@ -189,6 +233,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/Invalid" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
 
   /v1/devices:
     get:
@@ -209,6 +254,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Device" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
 
   /v1/devices/{deviceId}:
     delete:
@@ -224,6 +270,7 @@ paths:
         "204": { description: Revoked. }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
 
   /v1/sync/push:
     post:
@@ -347,6 +394,7 @@ paths:
               schema: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
 
   /v1/account/delete:
     post:
@@ -366,6 +414,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/Invalid" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
 
 components:
   securitySchemes:
@@ -391,11 +440,39 @@ components:
       description: Body larger than the advertised limit.
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     RateLimited:
-      description: Too many requests; honour Retry-After.
+      description: |
+        Too many requests; honour Retry-After. Applies to the per-address limit
+        (120 admitted requests per rolling 15 minutes; endpoint scope PROPOSED,
+        see CLOUD.md 16.9), the per-family refresh limit (six rotations per
+        rolling 15 minutes) and the other limits. Nothing is changed.
       headers:
         Retry-After:
+          description: Whole seconds to wait, rounded up, at least 1.
           schema: { type: integer, minimum: 1 }
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ServerBusy:
+      description: |
+        The server is temporarily at capacity (code `server_busy`): no
+        password-hashing permit, or a database lock or pool timeout. Retry after the stated delay. Nothing is changed. For
+        `exportData` it applies only before the first response byte.
+      headers:
+        Retry-After:
+          description: Whole seconds to wait; always 2.
+          schema: { type: integer, enum: [2] }
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    DeviceLimit:
+      description: |
+        25 active devices and no valid replacement was requested. Identical for
+        a missing, unknown, inactive or foreign `replace_device_id`. Returned
+        only after the password was verified. Carries no device information.
+        No session is created and nothing is revoked.
+      content: { application/json: { schema: { $ref: "#/components/schemas/DeviceLimitError" } } }
+    RefreshSuperseded:
+      description: |
+        This refresh token was already rotated by the request with the same
+        `operation_id`, whose response was lost. The successor cannot be
+        recovered. The family is not revoked; the client signs in again.
+      content: { application/json: { schema: { $ref: "#/components/schemas/RefreshSupersededError" } } }
 
   schemas:
     Uuid:
@@ -429,7 +506,40 @@ components:
             code:
               type: string
               enum: [unauthorized, forbidden, not_found, conflict, validation_failed,
-                     payload_too_large, rate_limited, unsupported_protocol, cursor_ahead, internal]
+                     payload_too_large, rate_limited, unsupported_protocol, cursor_ahead,
+                     device_limit_reached, refresh_superseded, server_busy, internal]
+            message: { type: string }
+            request_id: { type: string }
+            details: { type: object }
+
+    DeviceLimitError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id, details]
+          properties:
+            code: { type: string, enum: [device_limit_reached] }
+            message: { type: string }
+            request_id: { type: string }
+            details:
+              type: object
+              additionalProperties: false
+              required: [limit, active]
+              properties:
+                limit: { type: integer, enum: [25] }
+                active: { type: integer, enum: [25] }
+
+    RefreshSupersededError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string, enum: [refresh_superseded] }
             message: { type: string }
             request_id: { type: string }
             details: { type: object }
@@ -480,23 +590,61 @@ components:
         last_seen_at: { $ref: "#/components/schemas/Timestamp" }
         current: { type: boolean }
 
-    Credentials:
+    NewPassword:
+      type: string
+      minLength: 1
+      maxLength: 512
+      description: |
+        A password being set (register, recover, change). The 1 to 512 bounds
+        are only a raw precheck. The server normalizes to NFC and then
+        requires 15 to 128 Unicode code points. Case and whitespace are
+        preserved; there are no composition rules and no periodic change.
+        A common-password blocklist also applies.
+
+    ExistingPassword:
+      type: string
+      minLength: 1
+      maxLength: 512
+      description: |
+        A password that already exists (login, current password, confirmation).
+        Raw 1 to 512 bounds only; the 15-code-point minimum for new passwords
+        is not applied. The server normalizes to NFC before verifying.
+
+    RegisterRequest:
       type: object
       additionalProperties: false
       required: [login, password, device]
       properties:
         login: { type: string, minLength: 3, maxLength: 254 }
-        password: { type: string, minLength: 10, maxLength: 256 }
+        password: { $ref: "#/components/schemas/NewPassword" }
         device: { $ref: "#/components/schemas/DeviceInfo" }
-    RegisterRequest: { $ref: "#/components/schemas/Credentials" }
-    LoginRequest: { $ref: "#/components/schemas/Credentials" }
+
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [login, password, device]
+      properties:
+        login: { type: string, minLength: 3, maxLength: 254 }
+        password: { $ref: "#/components/schemas/ExistingPassword" }
+        device: { $ref: "#/components/schemas/DeviceInfo" }
+        replace_device_id:
+          $ref: "#/components/schemas/Uuid"
+          description: |
+            Used only when 25 devices are active: one of the caller's own active
+            devices (from `GET /devices`) to revoke and replace. Ignored below
+            the limit.
 
     RefreshRequest:
       type: object
       additionalProperties: false
-      required: [refresh_token]
+      required: [refresh_token, operation_id]
       properties:
         refresh_token: { type: string, minLength: 20, maxLength: 512 }
+        operation_id:
+          $ref: "#/components/schemas/Uuid"
+          description: |
+            Client-generated UUID, new for every refresh and reused only to
+            retry that exact request.
 
     TokenPair:
       type: object
@@ -515,6 +663,9 @@ components:
         access_token: { type: string }
         refresh_token: { type: string }
         expires_in: { type: integer, minimum: 1 }
+        replaced_device_id:
+          $ref: "#/components/schemas/Uuid"
+          description: Present only on a sign-in (`POST /v1/auth/login`) that replaced a device at the 25-device limit; absent otherwise. Not part of TokenPair.
 
     RecoveryCode:
       type: string
@@ -554,29 +705,29 @@ components:
       properties:
         login: { type: string, minLength: 3, maxLength: 254 }
         recovery_code: { $ref: "#/components/schemas/RecoveryCode" }
-        new_password: { type: string, minLength: 10, maxLength: 256 }
+        new_password: { $ref: "#/components/schemas/NewPassword" }
 
     PasswordConfirm:
       type: object
       additionalProperties: false
       required: [password]
       properties:
-        password: { type: string, minLength: 1, maxLength: 256 }
+        password: { $ref: "#/components/schemas/ExistingPassword" }
 
     ChangePasswordRequest:
       type: object
       additionalProperties: false
       required: [current_password, new_password]
       properties:
-        current_password: { type: string, minLength: 1, maxLength: 256 }
-        new_password: { type: string, minLength: 10, maxLength: 256 }
+        current_password: { $ref: "#/components/schemas/ExistingPassword" }
+        new_password: { $ref: "#/components/schemas/NewPassword" }
 
     DeleteAccountRequest:
       type: object
       additionalProperties: false
       required: [password, confirm]
       properties:
-        password: { type: string, minLength: 1, maxLength: 256 }
+        password: { $ref: "#/components/schemas/ExistingPassword" }
         confirm: { type: string, enum: [DELETE] }
 
     Task:
