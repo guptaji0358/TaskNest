@@ -41,6 +41,7 @@ class Ctx:
     """Context handed to every check. Paths are resolved once, here."""
     root: Path
     milestone: str = ""
+    baseline: bool = False  # --baseline: compare against out/verify/baseline.json
 
     @property
     def out_dir(self) -> Path:

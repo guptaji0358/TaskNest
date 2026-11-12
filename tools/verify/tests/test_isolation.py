@@ -16,7 +16,7 @@ import pytest
 import core
 import fs_snapshot as fs
 
-TOOL_FILES = ("verify.py", "core.py", "repo.py", "gitro.py", "sqlro.py")
+TOOL_FILES = ("verify.py", "core.py", "repo.py", "gitro.py", "sqlro.py", "checks_contract.py", "checks_m1.py", "checks_git.py", "milestones.json")
 VERIFY_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -53,10 +53,15 @@ def test_cli_changes_nothing_in_a_complete_project_copy(temp_project):
     before = fs.snapshot(temp_project)
     assert any(p.startswith(".git/") for p in before)  # .git really is being watched
     assert "out/bin/keep.txt" in before and "untracked.txt" in before
-    for args in ([], ["--json"], ["--list"], ["--only", "m1"], ["--full"]):
+    for args in ([], ["--json"], ["--list"], ["--only", "m1"], ["--only", "git"], ["--baseline"], ["--full"]):
         proc = run_cli(temp_project, *args)
-        assert proc.returncode in (core.EXIT_OK, core.EXIT_USAGE_OR_INCOMPLETE), proc.stderr
-    assert json.loads(run_cli(temp_project, "--json").stdout)["summary"]["counts"]["PASS"] == 0
+        assert proc.returncode in (core.EXIT_OK, core.EXIT_FAIL, core.EXIT_USAGE_OR_INCOMPLETE), proc.stderr
+    results = json.loads(run_cli(temp_project, "--json").stdout)["results"]
+    by_id = {f"{r['group']}.{r['id']}": r["status"] for r in results}
+    assert by_id["contract.files_present"] == "FAIL"  # the temp project has no api/ directory
+    assert by_id["m1.live_user_version"] == "SKIP"    # and no live database
+    assert by_id["git.milestone_scope"] == "INCOMPLETE"  # allowed paths are only PROPOSED
+    assert (temp_project / "tools" / "verify" / "milestones.json").is_file()
     result = fs.diff(before, fs.snapshot(temp_project))
     assert not fs.has_changes(result), result
     assert not (temp_project / "out" / "verify").exists()  # nothing generated in this phase

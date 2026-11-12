@@ -9,7 +9,7 @@ rather than a possibly wrong answer. Nothing here migrates, writes or creates fi
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from core import Status
@@ -98,3 +98,60 @@ def inspect(path: Path | str) -> DbInspection:
         if conn is not None:
             conn.close()
     return DbInspection(Status.PASS, "read-only inspection ok", db, int(version), tables)
+
+
+# --- Step 3.3: column and index structure (additive; `inspect` above is unchanged) ----------
+
+# Tables whose columns may be read. Fixed literal statements only; no name is ever formatted in.
+SCHEMA_TABLES = ("app_metadata", "sync_base", "sync_conflicts", "sync_outbox",
+                 "sync_state", "sync_tombstones", "tasks")
+_TABLE_INFO_SQL = {name: f'PRAGMA table_info("{name}")' for name in SCHEMA_TABLES}
+_Q_INDEXES = "SELECT name, tbl_name FROM sqlite_master WHERE type = 'index' ORDER BY name"
+_ALLOWED_SQL = _ALLOWED_SQL | frozenset(_TABLE_INFO_SQL.values()) | {_Q_INDEXES}
+
+
+@dataclass(frozen=True)
+class Column:
+    name: str
+    type: str
+    notnull: bool
+    pk: int
+
+
+@dataclass(frozen=True)
+class SchemaInspection:
+    status: Status
+    detail: str
+    path: Path | None = None
+    user_version: int | None = None
+    tables: tuple[str, ...] = ()
+    columns: dict = field(default_factory=dict)   # table -> tuple[Column, ...] (only tables present)
+    indexes: tuple[tuple[str, str], ...] = ()      # (index name, table name)
+
+
+def inspect_schema(path: Path | str) -> SchemaInspection:
+    """`inspect` plus the columns of the known TaskNest tables and all index names. Read-only.
+
+    The first call applies every guard (sidecars, header, immutable read-only open); the
+    structure is read only if that call returned PASS.
+    """
+    base = inspect(path)
+    if base.status is not Status.PASS:
+        return SchemaInspection(base.status, base.detail, base.path)
+    conn = None
+    try:
+        conn = sqlite3.connect(_readonly_uri(base.path), uri=True, timeout=1.0)
+        conn.execute("PRAGMA query_only = ON")
+        columns = {}
+        for name in SCHEMA_TABLES:
+            if name in base.tables:
+                rows = _run(conn, _TABLE_INFO_SQL[name])
+                columns[name] = tuple(Column(r[1], str(r[2]), bool(r[3]), int(r[5])) for r in rows)
+        indexes = tuple((r[0], r[1]) for r in _run(conn, _Q_INDEXES))
+    except sqlite3.Error as exc:
+        return SchemaInspection(Status.FAIL, f"cannot read database: {type(exc).__name__}", base.path)
+    finally:
+        if conn is not None:
+            conn.close()
+    return SchemaInspection(Status.PASS, "read-only inspection ok", base.path, base.user_version,
+                            base.tables, columns, indexes)
