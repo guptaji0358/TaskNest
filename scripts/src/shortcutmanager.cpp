@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QSettings>
 #include <QStandardPaths>
 
 namespace {
@@ -22,7 +23,52 @@ bool samePath(const QString &a, const QString &b)
     return !a.isEmpty() && QDir::cleanPath(a).compare(QDir::cleanPath(b), Qt::CaseInsensitive) == 0;
 }
 
+const QString kRunKey = QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+const QString kRunValue = QStringLiteral("TaskNest");
+
 } // namespace
+
+QString ShortcutManager::startupCommand()
+{
+    return QStringLiteral("\"%1\" %2").arg(exePath(), QLatin1String(kBackgroundArgument));
+}
+
+bool ShortcutManager::startWithWindows() const
+{
+    if (m_profile.active)
+        return false;
+#ifdef Q_OS_WIN
+    // The Run key always exists, so reading it creates nothing.
+    const QSettings run(kRunKey, QSettings::NativeFormat);
+    return run.value(kRunValue).toString().compare(startupCommand(), Qt::CaseInsensitive) == 0;
+#else
+    return false;
+#endif
+}
+
+bool ShortcutManager::setStartWithWindows(bool enabled)
+{
+    m_error.clear();
+#ifdef Q_OS_WIN
+    if (m_profile.active) {
+        m_error = tr("Startup is not available in a test profile.");
+    } else {
+        QSettings run(kRunKey, QSettings::NativeFormat);
+        if (enabled)
+            run.setValue(kRunValue, startupCommand());
+        else
+            run.remove(kRunValue);
+        run.sync();
+        if (run.status() != QSettings::NoError)
+            m_error = tr("Windows startup could not be changed.");
+    }
+#else
+    Q_UNUSED(enabled);
+    m_error = tr("Startup is not available here.");
+#endif
+    emit changed();
+    return m_error.isEmpty();
+}
 
 ShortcutManager::ShortcutManager(QObject *parent)
     : QObject(parent)
@@ -142,6 +188,7 @@ bool ShortcutManager::setStartMenuShortcut(bool enabled)
     const QString path = startMenuShortcutPath();
     if (!supported() || path.isEmpty()) {
         m_error = tr("Start Menu shortcuts are not available here.");
+        emit changed(); // the toggle re-reads its state instead of staying switched on
         return false;
     }
 

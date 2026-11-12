@@ -1,5 +1,6 @@
 #pragma once
 
+#include "syncstore.h"
 #include "task.h"
 
 #include <QList>
@@ -50,7 +51,8 @@ public:
     // Changing reminderAt re-arms the reminder (reminderSent = false).
     bool updateTask(const Task &task, Task *updated = nullptr);
     bool setCompleted(qint64 id, bool completed, Task *updated = nullptr);
-    bool deleteTask(qint64 id);
+    // `reason` (user, retention, clear_completed) is what a synced delete reports.
+    bool deleteTask(qint64 id, const QString &reason = QStringLiteral("user"));
 
     // Puts a previously deleted task back exactly as it was: same id, fields,
     // created/updated times and reminder state. Refuses (and changes nothing)
@@ -88,11 +90,15 @@ public:
 
     QString lastError() const { return m_lastError; }
 
+    // Local sync storage on the same connection (api/SYNC.md section 11).
+    SyncStore &sync() { return m_sync; }
+
 private:
     bool ensureReady();
     bool fail(const QString &message);
     bool validate(Task *task);
 
     Database &m_database;
+    SyncStore m_sync;
     QString m_lastError;
 };

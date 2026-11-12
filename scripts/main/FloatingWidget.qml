@@ -435,7 +435,7 @@ Window {
                         TNComboBox {
                             id: dueChoice
                             objectName: "widgetDueChoice"
-                            Layout.preferredWidth: 96
+                            Layout.preferredWidth: 124
                             implicitHeight: win.compact ? 32 : Theme.controlHeight
                             visible: win.width > 260
                             model: ["Today", "Tomorrow", "No date"]
@@ -634,6 +634,18 @@ Window {
                     text: "Keep above other windows"
                     checked: win.controller.alwaysOnTop
                     onToggled: win.controller.alwaysOnTop = checked
+                }
+
+                // One step back to the roomy default: every section, comfortable rows, default size.
+                TNButton {
+                    objectName: "widgetFullView"
+                    Layout.fillWidth: true
+                    text: "Reset to full view"
+                    onClicked: {
+                        win.controller.resetPreferences()
+                        win.width = 360
+                        win.height = 520
+                    }
                 }
             }
         }

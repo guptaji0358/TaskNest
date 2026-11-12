@@ -110,3 +110,12 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 .DS_Store
+
+# ---- Python / server (M2) ----
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.env.*
+*.egg-info/

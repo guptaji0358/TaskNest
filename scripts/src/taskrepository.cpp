@@ -1,8 +1,11 @@
 #include "taskrepository.h"
 
 #include "database.h"
+#include "syncstore.h"
 
+#include <QJsonObject>
 #include <QSqlDatabase>
+#include <QUuid>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStringList>
@@ -12,7 +15,7 @@ namespace {
 
 const QString kColumns = QStringLiteral(
     "id, title, notes, list_name, priority, due_at, completed, reminder_at, reminder_sent, "
-    "created_at, updated_at, completed_at");
+    "created_at, updated_at, completed_at, uuid");
 
 Task taskFromRow(const QSqlQuery &query)
 {
@@ -29,6 +32,7 @@ Task taskFromRow(const QSqlQuery &query)
     task.createdAt = Task::timestampFromVariant(query.value(9)).value_or(QDateTime());
     task.updatedAt = Task::timestampFromVariant(query.value(10)).value_or(QDateTime());
     task.completedAt = Task::timestampFromVariant(query.value(11));
+    task.uuid = query.value(12).toString();
     return task;
 }
 
@@ -37,10 +41,34 @@ QVariant nowText()
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
 }
 
+QJsonValue timestampJson(const std::optional<QDateTime> &timestamp)
+{
+    const QVariant text = Task::timestampToVariant(timestamp);
+    return text.isNull() ? QJsonValue(QJsonValue::Null) : QJsonValue(text.toString());
+}
+
+// The synced fields of a task (api/SYNC.md 2.1).
+QJsonObject syncJson(const Task &task)
+{
+    QJsonObject object;
+    object.insert(QStringLiteral("id"), task.uuid);
+    object.insert(QStringLiteral("title"), task.title);
+    object.insert(QStringLiteral("notes"), task.notes);
+    object.insert(QStringLiteral("list_name"), task.listName);
+    object.insert(QStringLiteral("priority"), task.priority);
+    object.insert(QStringLiteral("due_at"), timestampJson(task.dueAt));
+    object.insert(QStringLiteral("completed"), task.completed);
+    object.insert(QStringLiteral("completed_at"), timestampJson(task.completedAt));
+    object.insert(QStringLiteral("reminder_at"), timestampJson(task.reminderAt));
+    object.insert(QStringLiteral("created_at"), timestampJson(task.createdAt));
+    return object;
+}
+
 } // namespace
 
 TaskRepository::TaskRepository(Database &database)
     : m_database(database)
+    , m_sync(database)
 {
 }
 
@@ -186,14 +214,19 @@ bool TaskRepository::addTask(const Task &draft, Task *created)
     if (!validate(&task))
         return false;
 
+    // The row and (once an account is linked) its outbox operation commit together.
+    DbTransaction tx(m_database.connection());
+    if (!tx.begin())
+        return fail(QStringLiteral("Cannot start transaction: %1").arg(tx.error()));
+
     qint64 newId = 0;
     {
         QSqlDatabase db = m_database.connection();
         QSqlQuery insert(db);
         if (!insert.prepare(QStringLiteral(
                 "INSERT INTO tasks (title, notes, list_name, priority, due_at, completed, "
-                "reminder_at, reminder_sent, created_at, updated_at, completed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)"))) {
+                "reminder_at, reminder_sent, created_at, updated_at, completed_at, uuid) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)"))) {
             return fail(QStringLiteral("Cannot prepare insert: %1").arg(insert.lastError().text()));
         }
         const QVariant now = nowText();
@@ -207,11 +240,21 @@ bool TaskRepository::addTask(const Task &draft, Task *created)
         insert.addBindValue(now);
         insert.addBindValue(now);
         insert.addBindValue(task.completed ? now : QVariant(QMetaType::fromType<QString>()));
+        insert.addBindValue(QUuid::createUuid().toString(QUuid::WithoutBraces));
         if (!insert.exec())
             return fail(QStringLiteral("Cannot add task: %1").arg(insert.lastError().text()));
         newId = insert.lastInsertId().toLongLong();
     }
-    return getTask(newId, created);
+    Task stored;
+    if (!getTask(newId, &stored))
+        return false;
+    if (!m_sync.recordCreate(syncJson(stored)))
+        return fail(m_sync.lastError());
+    if (!tx.commit())
+        return fail(QStringLiteral("Cannot save the task: %1").arg(tx.error()));
+    if (created)
+        *created = stored;
+    return true;
 }
 
 bool TaskRepository::updateTask(const Task &task, Task *updated)
@@ -220,6 +263,13 @@ bool TaskRepository::updateTask(const Task &task, Task *updated)
         return false;
     Task edited = task;
     if (!validate(&edited))
+        return false;
+
+    DbTransaction tx(m_database.connection());
+    if (!tx.begin())
+        return fail(QStringLiteral("Cannot start transaction: %1").arg(tx.error()));
+    Task before;
+    if (!getTask(edited.id, &before))
         return false;
 
     {
@@ -247,12 +297,28 @@ bool TaskRepository::updateTask(const Task &task, Task *updated)
         if (update.numRowsAffected() == 0)
             return fail(QStringLiteral("Task %1 was not found.").arg(edited.id));
     }
-    return getTask(edited.id, updated);
+    Task after;
+    if (!getTask(edited.id, &after))
+        return false;
+    if (!m_sync.recordEdit(syncJson(before), syncJson(after)))
+        return fail(m_sync.lastError());
+    if (!tx.commit())
+        return fail(QStringLiteral("Cannot save the task: %1").arg(tx.error()));
+    if (updated)
+        *updated = after;
+    return true;
 }
 
 bool TaskRepository::setCompleted(qint64 id, bool completed, Task *updated)
 {
     if (!ensureReady())
+        return false;
+
+    DbTransaction tx(m_database.connection());
+    if (!tx.begin())
+        return fail(QStringLiteral("Cannot start transaction: %1").arg(tx.error()));
+    Task before;
+    if (!getTask(id, &before))
         return false;
 
     {
@@ -277,7 +343,16 @@ bool TaskRepository::setCompleted(qint64 id, bool completed, Task *updated)
         if (update.numRowsAffected() == 0)
             return fail(QStringLiteral("Task %1 was not found.").arg(id));
     }
-    return getTask(id, updated);
+    Task after;
+    if (!getTask(id, &after))
+        return false;
+    if (!m_sync.recordEdit(syncJson(before), syncJson(after)))
+        return fail(m_sync.lastError());
+    if (!tx.commit())
+        return fail(QStringLiteral("Cannot save the task: %1").arg(tx.error()));
+    if (updated)
+        *updated = after;
+    return true;
 }
 
 namespace {
@@ -379,14 +454,21 @@ bool TaskRepository::restoreTask(const Task &snapshot, Task *restored)
     Task task = snapshot;
     if (!validate(&task))
         return false;
+    if (task.uuid.isEmpty())
+        task.uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+
+    DbTransaction tx(m_database.connection());
+    if (!tx.begin())
+        return fail(QStringLiteral("Cannot start transaction: %1").arg(tx.error()));
 
     {
         QSqlDatabase db = m_database.connection();
         QSqlQuery insert(db);
         if (!insert.prepare(QStringLiteral(
                 "INSERT INTO tasks (id, title, notes, list_name, priority, due_at, completed, "
-                "reminder_at, reminder_sent, created_at, updated_at, completed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))) {
+                "reminder_at, reminder_sent, created_at, updated_at, completed_at, uuid, server_rev) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "(SELECT rev FROM sync_base WHERE task_uuid = ?))"))) {
             return fail(QStringLiteral("Cannot prepare restore: %1").arg(insert.lastError().text()));
         }
         const QDateTime now = QDateTime::currentDateTimeUtc();
@@ -409,6 +491,8 @@ bool TaskRepository::restoreTask(const Task &snapshot, Task *restored)
             completedAt = updated;
         insert.addBindValue(task.completed ? Task::timestampToVariant(completedAt)
                                            : QVariant(QMetaType::fromType<QString>()));
+        insert.addBindValue(task.uuid);
+        insert.addBindValue(task.uuid);
         if (!insert.exec()) {
             const QString reason = insert.lastError().text();
             if (reason.contains(QStringLiteral("UNIQUE"), Qt::CaseInsensitive)
@@ -418,23 +502,46 @@ bool TaskRepository::restoreTask(const Task &snapshot, Task *restored)
             return fail(QStringLiteral("Cannot restore task: %1").arg(reason));
         }
     }
-    return getTask(task.id, restored);
+    Task back;
+    if (!getTask(task.id, &back))
+        return false;
+    if (!m_sync.recordUndoDelete(syncJson(back)))
+        return fail(m_sync.lastError());
+    if (!tx.commit())
+        return fail(QStringLiteral("Cannot restore the task: %1").arg(tx.error()));
+    if (restored)
+        *restored = back;
+    return true;
 }
 
-bool TaskRepository::deleteTask(qint64 id)
+bool TaskRepository::deleteTask(qint64 id, const QString &reason)
 {
     if (!ensureReady())
         return false;
 
-    QSqlDatabase db = m_database.connection();
-    QSqlQuery remove(db);
-    if (!remove.prepare(QStringLiteral("DELETE FROM tasks WHERE id = ?")))
-        return fail(QStringLiteral("Cannot prepare delete: %1").arg(remove.lastError().text()));
-    remove.addBindValue(id);
-    if (!remove.exec())
-        return fail(QStringLiteral("Cannot delete task: %1").arg(remove.lastError().text()));
-    if (remove.numRowsAffected() == 0)
-        return fail(QStringLiteral("Task %1 was not found.").arg(id));
+    DbTransaction tx(m_database.connection());
+    if (!tx.begin())
+        return fail(QStringLiteral("Cannot start transaction: %1").arg(tx.error()));
+    Task task;
+    if (!getTask(id, &task))
+        return false;
+    // Recorded while the row still exists: the operation needs its revision.
+    if (!m_sync.recordDelete(syncJson(task), id, reason))
+        return fail(m_sync.lastError());
+
+    {
+        QSqlDatabase db = m_database.connection();
+        QSqlQuery remove(db);
+        if (!remove.prepare(QStringLiteral("DELETE FROM tasks WHERE id = ?")))
+            return fail(QStringLiteral("Cannot prepare delete: %1").arg(remove.lastError().text()));
+        remove.addBindValue(id);
+        if (!remove.exec())
+            return fail(QStringLiteral("Cannot delete task: %1").arg(remove.lastError().text()));
+        if (remove.numRowsAffected() == 0)
+            return fail(QStringLiteral("Task %1 was not found.").arg(id));
+    }
+    if (!tx.commit())
+        return fail(QStringLiteral("Cannot delete the task: %1").arg(tx.error()));
     return true;
 }
 
@@ -482,54 +589,50 @@ bool TaskRepository::purgeCompleted(const std::optional<QDateTime> &completedBef
         : QStringLiteral("completed = 1");
     const QVariant cutoff = Task::timestampToVariant(completedBefore);
 
-    if (!db.transaction())
-        return fail(QStringLiteral("Cannot start transaction: %1").arg(db.lastError().text()));
+    DbTransaction tx(db);
+    if (!tx.begin())
+        return fail(QStringLiteral("Cannot start transaction: %1").arg(tx.error()));
 
     QList<qint64> ids;
     {
         QSqlQuery select(db);
-        if (!select.prepare(QStringLiteral("SELECT id FROM tasks WHERE %1 ORDER BY id").arg(where))) {
-            const QString reason = select.lastError().text();
-            db.rollback();
-            return fail(QStringLiteral("Cannot prepare cleanup: %1").arg(reason));
-        }
+        if (!select.prepare(QStringLiteral("SELECT id FROM tasks WHERE %1 ORDER BY id").arg(where)))
+            return fail(QStringLiteral("Cannot prepare cleanup: %1").arg(select.lastError().text()));
         if (bounded)
             select.addBindValue(cutoff);
-        if (!select.exec()) {
-            const QString reason = select.lastError().text();
-            db.rollback();
-            return fail(QStringLiteral("Cannot find completed tasks: %1").arg(reason));
-        }
+        if (!select.exec())
+            return fail(QStringLiteral("Cannot find completed tasks: %1").arg(select.lastError().text()));
         while (select.next())
             ids << select.value(0).toLongLong();
     }
 
+    // Every deletion syncs as a tombstone with its reason (SYNC 7). Recorded
+    // before the rows go: each operation needs the task's revision.
+    const QString reason = bounded ? QStringLiteral("retention") : QStringLiteral("clear_completed");
+    for (qint64 id : ids) {
+        Task task;
+        if (!getTask(id, &task))
+            return false;
+        if (!m_sync.recordDelete(syncJson(task), id, reason))
+            return fail(m_sync.lastError());
+    }
+
     if (!ids.isEmpty()) {
         QSqlQuery remove(db);
-        if (!remove.prepare(QStringLiteral("DELETE FROM tasks WHERE %1").arg(where))) {
-            const QString reason = remove.lastError().text();
-            db.rollback();
-            return fail(QStringLiteral("Cannot prepare cleanup: %1").arg(reason));
-        }
+        if (!remove.prepare(QStringLiteral("DELETE FROM tasks WHERE %1").arg(where)))
+            return fail(QStringLiteral("Cannot prepare cleanup: %1").arg(remove.lastError().text()));
         if (bounded)
             remove.addBindValue(cutoff);
-        if (!remove.exec()) {
-            const QString reason = remove.lastError().text();
-            db.rollback();
-            return fail(QStringLiteral("Cannot delete completed tasks: %1").arg(reason));
-        }
+        if (!remove.exec())
+            return fail(QStringLiteral("Cannot delete completed tasks: %1").arg(remove.lastError().text()));
         if (remove.numRowsAffected() != ids.size()) {
-            db.rollback();
             return fail(QStringLiteral("Cleanup was cancelled because the set of completed "
                                        "tasks changed unexpectedly. Nothing was deleted."));
         }
     }
 
-    if (!db.commit()) {
-        const QString reason = db.lastError().text();
-        db.rollback();
-        return fail(QStringLiteral("Cannot commit cleanup: %1").arg(reason));
-    }
+    if (!tx.commit())
+        return fail(QStringLiteral("Cannot commit cleanup: %1").arg(tx.error()));
     if (deletedIds)
         *deletedIds = ids;
     return true;

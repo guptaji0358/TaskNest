@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 
-// Sidebar entry. The active item gets a soft lime tint, a lime icon and a
+// Sidebar entry. The active item gets a soft accent tint, an accent icon and a
 // short "notch" on the leading edge. `collapsed` shows the icon only.
 AbstractButton {
     id: control

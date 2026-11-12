@@ -51,6 +51,10 @@ class WidgetController : public QObject
     // Application-wide UI preference kept with the other UI preferences:
     // shortens or removes nonessential transitions (Theme.userReducedMotion).
     Q_PROPERTY(bool reduceMotion READ reduceMotion WRITE setReduceMotion NOTIFY preferencesChanged)
+    // Closing the main window hides TaskNest to a notification-area icon instead
+    // of quitting, so reminders keep arriving. Off by default; the tray menu
+    // always offers Quit. Nothing is registered with Windows.
+    Q_PROPERTY(bool runInBackground READ runInBackground WRITE setRunInBackground NOTIFY preferencesChanged)
 
 public:
     static constexpr int kMinWidth = 220;
@@ -110,6 +114,7 @@ public:
     bool showDetails() const { return m_showDetails; }
     bool showOnLaunch() const { return m_showOnLaunch; }
     bool reduceMotion() const { return m_reduceMotion; }
+    bool runInBackground() const { return m_runInBackground; }
 
     void setWidgetVisible(bool visible);
     void setX(int x);
@@ -127,6 +132,7 @@ public:
     void setShowDetails(bool show);
     void setShowOnLaunch(bool show);
     void setReduceMotion(bool reduce);
+    void setRunInBackground(bool background);
 
     // Restores every preference (not the position) to its default.
     Q_INVOKABLE void resetPreferences();
@@ -165,4 +171,5 @@ private:
     bool m_showDetails = true;
     bool m_showOnLaunch = false;
     bool m_reduceMotion = false;
+    bool m_runInBackground = false;
 };

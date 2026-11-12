@@ -1408,7 +1408,7 @@ TestCase {
 
     function test_reduceMotionSwitchInSettingsTogglesThePreference() {
         useController()
-        openCleanup()
+        openSettings()
         const sw = find("reduceMotionSwitch")
         verify(sw !== null)
         compare(sw.checked, false)
@@ -1449,9 +1449,17 @@ TestCase {
 
     // ---- completed-task cleanup ---------------------------------------------
 
-    function openCleanup() {
-        mouseClick(find("settingsButton"))
+    // Opens Settings on its first page (General).
+    function openSettings() {
+        view.openSettings()               // the button itself lives in the title bar
         tryCompare(view.cleanupSettings.settingsDialog, "opened", true)
+    }
+    // Opens Settings and switches to the Completed tasks page.
+    function openCleanup() {
+        openSettings()
+        mouseClick(find("settingsTab2"))
+        tryCompare(find("cleanupModeBox"), "visible", true)
+        wait(50)                              // the dialog re-centres for the new page
     }
     function closeCleanup() {
         mouseClick(find("cleanupClose"))
@@ -1468,13 +1476,11 @@ TestCase {
         closeCleanup()
     }
 
-    function test_cleanupSettingsReachableByKeyboardAndEscapeCloses() {
-        find("settingsButton").forceActiveFocus()
-        verify(find("settingsButton").activeFocus)
-        keyClick(Qt.Key_Space)
+    function test_cleanupSettingsEscapeCloses() {
+        view.openSettings()
         tryVerify(function () { return view.cleanupSettings.settingsDialog.opened }, 5000,
                   diag("settings dialog did not open"))
-        verify(find("cleanupModeBox").activeFocus, diag("cleanup dialog: first control is focused")) // first control is focused
+        verify(find("settingsTab0").activeFocus, diag("settings dialog: first tab is focused"))
         keyClick(Qt.Key_Escape)
         tryCompare(view.cleanupSettings.settingsDialog, "visible", false)
     }

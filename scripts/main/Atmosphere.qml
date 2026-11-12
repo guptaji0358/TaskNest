@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Shapes
 
-// Soft colored light behind the workspace: a lime glow at the upper left and a
+// Soft colored light behind the workspace: a blue glow at the upper left and a
 // violet one at the lower right. Purely decorative (never takes input), kept at
 // low alpha so task text always has full contrast, and static: nothing here
 // animates or repaints after the first frame.

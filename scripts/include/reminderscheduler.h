@@ -32,8 +32,10 @@ class TaskRepository;
 //    (task edits, completion, deletion), when the application becomes active,
 //    and after resume from sleep (watchSystemResume() wires the latter).
 //
-// Reminders are only delivered while the application process is running.
-// Nothing is registered with Windows (no service, task or startup entry).
+// Reminders are only delivered while the application process is running; with
+// "Keep running in the background" that includes the time the main window is
+// hidden to the tray. Nothing is registered with Windows (no service, task or
+// startup entry).
 class ReminderScheduler : public QObject
 {
     Q_OBJECT

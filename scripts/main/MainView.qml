@@ -42,6 +42,7 @@ Item {
     property string navKey: "all"
     property string errorText: ""   // last model error, shown in the banner
     property string addMessage: ""  // validation message under the add field
+    property Item titleSearchHost: null // title-bar slot that takes the search field, if any
     property bool forceRail: false  // user collapsed the sidebar
     property bool quickDetails: false   // Quick Add details panel open
     property double lastAddAt: 0        // ms timestamp of the last successful add
@@ -232,6 +233,10 @@ Item {
             return
         }
         editor.openFor(data)
+    }
+
+    function openSettings() {
+        cleanup.open()
     }
 
     function toggleWidget() {
@@ -525,45 +530,6 @@ Item {
                 anchors.topMargin: Theme.s4
                 spacing: Theme.s1
 
-                // Wordmark: a lime tile holding a nest, then "Task" + "Nest".
-                Item {
-                    Layout.fillWidth: true
-                    implicitHeight: 38
-
-                    Rectangle {
-                        id: logoTile
-                        width: 34
-                        height: 34
-                        radius: 11
-                        color: "transparent"
-                        anchors.verticalCenter: parent.verticalCenter
-                        x: root.railMode ? (parent.width - width) / 2 : Theme.s2
-                        // The application icon itself, so the sidebar and the
-                        // Windows icon are the same mark.
-                        Image {
-                            anchors.fill: parent
-                            source: "qrc:/icons/tasknest-256.png"
-                            sourceSize: Qt.size(68, 68)
-                            smooth: true
-                            mipmap: true
-                        }
-                    }
-                    TNLabel {
-                        visible: !root.railMode
-                        anchors.left: logoTile.right
-                        anchors.leftMargin: Theme.s3
-                        anchors.verticalCenter: parent.verticalCenter
-                        textFormat: Text.StyledText
-                        text: "Task<font color=\"" + Theme.accent + "\">Nest</font>"
-                        font.family: Theme.displayFamily
-                        font.pixelSize: 22
-                        font.weight: Font.DemiBold
-                        font.letterSpacing: -0.2
-                    }
-                }
-
-                Item { implicitHeight: Theme.s2 }
-
                 TNButton {
                     id: newTaskButton
                     objectName: "newTaskButton"
@@ -629,27 +595,6 @@ Item {
                     }
                 }
 
-                NavItem {
-                    objectName: "widgetToggle"
-                    visible: root.widgetController !== null
-                    Layout.fillWidth: true
-                    iconName: "widget"
-                    label: "Floating widget"
-                    active: root.widgetController ? root.widgetController.widgetVisible : false
-                    collapsed: root.railMode
-                    Accessible.description: "Show or hide the floating desktop widget (Ctrl+Shift+W)"
-                    onClicked: root.toggleWidget()
-                }
-                NavItem {
-                    objectName: "settingsButton"
-                    Layout.fillWidth: true
-                    iconName: "settings"
-                    label: "Settings"
-                    collapsed: root.railMode
-                    Accessible.description: "Completed-task cleanup"
-                    onClicked: cleanup.open()
-                }
-
                 // footer: where the data lives, and the collapse toggle
                 RowLayout {
                     Layout.fillWidth: true
@@ -673,13 +618,6 @@ Item {
                         iconName: "keyboard"
                         tip: "Keyboard shortcuts (F1)"
                         onClicked: shortcutsDialog.open()
-                    }
-                    TNIconButton {
-                        visible: root.width >= Theme.railBreakpoint
-                        Layout.alignment: Qt.AlignHCenter
-                        iconName: "panel"
-                        tip: root.forceRail ? "Expand sidebar" : "Collapse sidebar"
-                        onClicked: root.forceRail = !root.forceRail
                     }
                 }
             }
@@ -759,6 +697,7 @@ Item {
 
                 // search + filter
                 RowLayout {
+                    id: searchRow
                     Layout.fillWidth: true
                     Layout.fillHeight: false
                     Layout.topMargin: Theme.s1
@@ -767,6 +706,13 @@ Item {
                     TNTextField {
                         id: searchField
                         objectName: "searchField"
+                        // With a host (the title bar) the field lives there instead.
+                        parent: root.titleSearchHost && root.titleSearchHost.visible
+                                ? root.titleSearchHost : searchRow
+                        readonly property bool inTitleBar: parent === root.titleSearchHost
+                        implicitHeight: inTitleBar ? parent.height : Theme.controlHeight
+                        width: inTitleBar ? parent.width : implicitWidth
+                        height: inTitleBar ? parent.height : implicitHeight
                         Layout.fillWidth: true
                         iconName: "search"
                         clearable: true
@@ -775,6 +721,7 @@ Item {
                         Keys.onEscapePressed: clear()
                         Keys.onDownPressed: root.focusList()
                     }
+                    Item { Layout.fillWidth: true; visible: searchField.inTitleBar }
                     TNComboBox {
                         id: filterBox
                         objectName: "filterBox"

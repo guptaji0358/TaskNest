@@ -8,6 +8,7 @@ Button {
     property string iconName: ""
     property string tip: ""
     property bool danger: false
+    property bool active: false     // toggled-on state (accent tint)
 
     implicitWidth: 32
     implicitHeight: 32
@@ -27,6 +28,7 @@ Button {
             size: 16
             color: !control.enabled ? Theme.textFaint
                    : control.danger && (control.hovered || control.visualFocus) ? Theme.danger
+                   : control.active ? Theme.accent
                    : control.hovered ? Theme.text : Theme.textMuted
         }
     }
@@ -35,6 +37,7 @@ Button {
         radius: Theme.radiusSm
         color: control.down ? Theme.elevated
                : control.hovered ? (control.danger ? Theme.dangerSoft : Theme.surfaceRaised)
+               : control.active ? Theme.accentSoft
                : "transparent"
         border.width: control.visualFocus ? 2 : 0
         border.color: Theme.focus

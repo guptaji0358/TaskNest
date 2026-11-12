@@ -39,6 +39,7 @@ qt_add_library(tasknestcore STATIC
     scripts/src/cleanuppolicy.cpp
     scripts/src/database.cpp
     scripts/src/taskrepository.cpp
+    scripts/src/syncstore.cpp
     scripts/src/tasklistmodel.cpp
     scripts/src/widgetcontroller.cpp
     scripts/src/reminderscheduler.cpp
@@ -49,6 +50,8 @@ qt_add_library(tasknestcore STATIC
     scripts/include/selectioncapture.h
     scripts/src/deeplink.cpp
     scripts/src/globalhotkey.cpp
+    scripts/src/windowchrome.cpp
+    scripts/include/windowchrome.h
     scripts/include/deeplink.h
     scripts/include/globalhotkey.h
     scripts/include/integrationserver.h
@@ -57,6 +60,7 @@ qt_add_library(tasknestcore STATIC
     scripts/include/database.h
     scripts/include/task.h
     scripts/include/taskrepository.h
+    scripts/include/syncstore.h
     scripts/include/tasklistmodel.h
     scripts/include/widgetcontroller.h
     scripts/include/reminderscheduler.h
@@ -74,6 +78,29 @@ target_link_libraries(tasknestcore PUBLIC
     Qt6::Sql
     Qt6::Network
 )
+if(WIN32)
+    target_link_libraries(tasknestcore PUBLIC dwmapi)
+endif()
+
+# The application executables live in one fixed place, whatever the configuration.
+# The Qt/MinGW runtime (DLLs, plugins, QML modules) is deployed into out/bin/runtime
+# so out/bin only holds the executables, qt.conf and data/. Turn the deployment off
+# with -DTASKNEST_DEPLOY_DLLS=OFF (then Qt/MinGW must be on PATH).
+set(TASKNEST_BIN_DIR "${CMAKE_SOURCE_DIR}/out/bin")
+set(TASKNEST_RUNTIME_DIR "${TASKNEST_BIN_DIR}/runtime")
+option(TASKNEST_DEPLOY_DLLS "Run windeployqt after building TaskNest" ON)
+set(TASKNEST_USE_RUNTIME OFF)
+if(WIN32 AND TASKNEST_DEPLOY_DLLS)
+    get_target_property(_tn_qmake Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(_tn_qt_bin "${_tn_qmake}" DIRECTORY)
+    find_program(TASKNEST_WINDEPLOYQT windeployqt
+        HINTS "${_tn_qt_bin}" NO_DEFAULT_PATH)
+    if(TASKNEST_WINDEPLOYQT)
+        set(TASKNEST_USE_RUNTIME ON)
+    else()
+        message(WARNING "windeployqt not found; runtime DLLs will not be copied")
+    endif()
+endif()
 
 # Icon resources: the Qt resource file feeds the window icon; the Windows
 # resource file embeds the executable icon and version info.
@@ -86,6 +113,12 @@ if(WIN32)
     set(CMAKE_RC_COMPILE_OBJECT "<CMAKE_RC_COMPILER> -O coff <DEFINES> <FLAGS> <SOURCE> <OBJECT>")
     file(READ resources/app.rc TASKNEST_RC_TEXT)
     string(REPLACE "\"app.ico\"" "\"${CMAKE_SOURCE_DIR}/resources/app.ico\"" TASKNEST_RC_TEXT "${TASKNEST_RC_TEXT}")
+    set(TASKNEST_MANIFEST_RC "")
+    if(TASKNEST_USE_RUNTIME)
+        # Tells the loader to find the Qt/MinGW DLLs in out/bin/runtime.
+        set(TASKNEST_MANIFEST_RC "1 24 \"${CMAKE_SOURCE_DIR}/resources/app.manifest\"\n")
+        string(APPEND TASKNEST_RC_TEXT "\n${TASKNEST_MANIFEST_RC}")
+    endif()
     file(WRITE "${CMAKE_BINARY_DIR}/app.rc" "${TASKNEST_RC_TEXT}")
     set(TASKNEST_WIN_RC "${CMAKE_BINARY_DIR}/app.rc")
     set_source_files_properties("${CMAKE_BINARY_DIR}/app.rc" PROPERTIES
@@ -100,7 +133,14 @@ qt_add_executable(appTaskNest
 
 # Companion console program started by Chrome/Edge for the browser extension.
 # It answers one message and exits; it never starts TaskNest.
-qt_add_executable(TaskNestHost scripts/main/hostmain.cpp)
+set(TASKNEST_HOST_RC "")
+if(TASKNEST_USE_RUNTIME)
+    file(WRITE "${CMAKE_BINARY_DIR}/host.rc" "${TASKNEST_MANIFEST_RC}")
+    set(TASKNEST_HOST_RC "${CMAKE_BINARY_DIR}/host.rc")
+    set_source_files_properties("${TASKNEST_HOST_RC}" PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/resources/app.manifest")
+endif()
+qt_add_executable(TaskNestHost scripts/main/hostmain.cpp ${TASKNEST_HOST_RC})
 target_link_libraries(TaskNestHost PRIVATE tasknesthostcore)
 set_target_properties(TaskNestHost PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/out/bin")
@@ -108,9 +148,6 @@ foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set_target_properties(TaskNestHost PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_SOURCE_DIR}/out/bin")
 endforeach()
-
-# The application executable lives in one fixed place, whatever the configuration.
-set(TASKNEST_BIN_DIR "${CMAKE_SOURCE_DIR}/out/bin")
 
 set_target_properties(appTaskNest PROPERTIES
     OUTPUT_NAME TaskNest
@@ -123,27 +160,27 @@ foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
         RUNTIME_OUTPUT_DIRECTORY_${config} "${TASKNEST_BIN_DIR}")
 endforeach()
 
-# Copy the Qt and MinGW runtime DLLs, plugins and QML modules next to the
-# executables so they start without Qt/MinGW on PATH (and cannot pick up a
-# libstdc++ from another toolchain). Everything lands in out/bin (git-ignored);
-# out/bin/data is never touched. Turn off with -DTASKNEST_DEPLOY_DLLS=OFF.
-option(TASKNEST_DEPLOY_DLLS "Run windeployqt after building TaskNest" ON)
-if(WIN32 AND TASKNEST_DEPLOY_DLLS)
-    get_target_property(_tn_qmake Qt6::qmake IMPORTED_LOCATION)
-    get_filename_component(_tn_qt_bin "${_tn_qmake}" DIRECTORY)
-    find_program(TASKNEST_WINDEPLOYQT windeployqt
-        HINTS "${_tn_qt_bin}" NO_DEFAULT_PATH)
-    if(TASKNEST_WINDEPLOYQT)
-        add_custom_command(TARGET appTaskNest POST_BUILD
-            COMMAND "${TASKNEST_WINDEPLOYQT}"
-                --no-translations --no-system-d3d-compiler --no-opengl-sw
-                --qmldir "${CMAKE_SOURCE_DIR}/scripts/main"
-                "$<TARGET_FILE:appTaskNest>"
-            COMMENT "Deploying Qt/MinGW runtime into out/bin"
-            VERBATIM)
-    else()
-        message(WARNING "windeployqt not found; runtime DLLs will not be copied")
-    endif()
+# Copy the Qt and MinGW runtime DLLs, plugins and QML modules into
+# out/bin/runtime so the executables start without Qt/MinGW on PATH (and cannot
+# pick up a libstdc++ from another toolchain). The embedded manifest points the
+# loader at runtime/ and qt.conf points Qt at its plugins and QML modules.
+# Everything lands in out/bin (git-ignored); out/bin/data is never touched.
+if(TASKNEST_USE_RUNTIME)
+    add_custom_command(TARGET appTaskNest POST_BUILD
+        COMMAND "${TASKNEST_WINDEPLOYQT}"
+            --no-translations --no-system-d3d-compiler --no-opengl-sw
+            --dir "${TASKNEST_RUNTIME_DIR}"
+            --qmldir "${CMAKE_SOURCE_DIR}/scripts/main"
+            "$<TARGET_FILE:appTaskNest>"
+        # Headless platform used by the automated tests (QT_QPA_PLATFORM=offscreen).
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${_tn_qt_bin}/../plugins/platforms/qoffscreen.dll"
+            "${TASKNEST_RUNTIME_DIR}/platforms/qoffscreen.dll"
+        COMMAND "${CMAKE_COMMAND}"
+            -DBIN_DIR=${TASKNEST_BIN_DIR} -DRUNTIME_DIR=${TASKNEST_RUNTIME_DIR}
+            -P "${CMAKE_SOURCE_DIR}/resources/runtime_manifest.cmake"
+        COMMENT "Deploying Qt/MinGW runtime into out/bin/runtime"
+        VERBATIM)
 endif()
 
 # Generate qmldir files for QML living outside the source root (scripts/main).
@@ -176,12 +213,14 @@ qt_add_qml_module(appTaskNest
         scripts/main/QuickAddPanel.qml
         scripts/main/TaskCheck.qml
         scripts/main/NavItem.qml
+        scripts/main/TitleBar.qml
         scripts/main/TaskRow.qml
         scripts/main/ReminderBanner.qml
         scripts/main/EmptyState.qml
         scripts/main/TaskEditor.qml
         scripts/main/CleanupSettings.qml
         scripts/main/FloatingWidget.qml
+        scripts/main/TrayIcon.qml
         scripts/main/QuickCaptureWindow.qml
         scripts/main/SelectionCaptureWindow.qml
         scripts/main/MainView.qml

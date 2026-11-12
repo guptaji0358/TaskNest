@@ -1,0 +1,983 @@
+openapi: 3.1.0
+info:
+  title: TaskNest Sync API
+  version: 1.0.0-draft
+  summary: Vendor-independent sync API for the optional TaskNest cloud feature.
+  description: |
+    Owned by TaskNest, not by any hosting provider. Normative sync and conflict
+    rules are in `SYNC.md`; this file is the wire contract. Shared conformance
+    fixtures are in `conformance/`.
+
+    Rules for the contract:
+    - Versioned in the path (`/v1`). Within `/v1` only additive changes are made,
+      and clients ignore unknown response fields.
+    - No host names, provider names or provider-specific fields appear anywhere.
+    - Timestamps are UTC with exactly three fractional digits, e.g.
+      `2026-03-01T12:00:00.000Z`. Times are compared as strings.
+    - Local-only TaskNest never calls this API.
+    - Clients send `X-TaskNest-Protocol: 1`. Every response carries `X-Request-Id`.
+      A client whose protocol is no longer supported gets `unsupported_protocol`
+      and stops syncing; TaskNest never forces an update.
+servers:
+  - url: "{baseUrl}"
+    description: Configured in the TaskNest client settings; any HTTPS host.
+    variables:
+      baseUrl:
+        default: https://tasknest.example.invalid
+security:
+  - bearerAuth: []
+tags:
+  - name: meta
+  - name: auth
+  - name: devices
+  - name: sync
+  - name: account
+
+paths:
+  /v1/health:
+    get:
+      tags: [meta]
+      operationId: getHealth
+      summary: Liveness probe (no authentication).
+      security: []
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /v1/version:
+    get:
+      tags: [meta]
+      operationId: getVersion
+      summary: Protocol range, limits and an optional relocation hint (no authentication).
+      security: []
+      responses:
+        "200":
+          description: Version information.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionInfo" }
+
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      summary: Create an account and its first device session.
+      description: |
+        Returns ten single-use recovery codes. They are shown once and the
+        server keeps only keyed hashes. Losing both the password and every
+        code makes the cloud account unrecoverable.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: Account created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegisterResponse" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Invalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
+
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Sign in. Always creates a fresh device record.
+      description: |
+        The password is verified first, against the stored hash, outside any
+        database lock or open transaction (a wrong password is `401` with no
+        device information). The server then locks the user's row and re-reads
+        the hash under that lock; only if it is the hash that was verified is a
+        session created, which serializes sign-in against a concurrent password
+        change. If the hash changed, the server releases the lock, verifies once
+        more with a fresh hashing permit (same 2-second wait limit) outside any
+        lock, and a second change answers `503 server_busy`. Only after a
+        successful verification, at 25 active devices, the sign-in is
+        refused with `409 device_limit_reached` (`details` is exactly `limit`
+        and `active`, both 25, with no device list) unless `replace_device_id`
+        names one of the caller's active devices. That device's family row is
+        locked after the user row, ownership and active status are rechecked
+        under that lock, and the device is revoked and replaced in the same
+        transaction (`replaced_device_id` in the response). A missing, unknown,
+        inactive or foreign `replace_device_id` gets the identical 409; there is
+        no 404. Below the limit `replace_device_id` is ignored and nothing is
+        revoked.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Signed in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/DeviceLimit" }
+        "422": { $ref: "#/components/responses/Invalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
+
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshToken
+      summary: Exchange a refresh token for a new pair (rotation).
+      description: |
+        Rotates on every success; the raw successor is returned once and cannot
+        be recovered. `operation_id` is a client-generated UUID, reused only to
+        retry that exact request. Evaluated in this order, first match wins:
+        (1) unknown token, or revoked or expired family: 401, no change;
+        (2) rotated token with the same `operation_id`: 409 `refresh_superseded`,
+        no change, the family is not revoked (sign in again);
+        (3) rotated token with a different `operation_id`: the family is revoked
+        and 401 is returned;
+        (4) latest token whose `operation_id` was already used by another token
+        of the same family: 401, no change;
+        (5) latest token with an unused `operation_id`: at most six successful
+        rotations per family in any rolling 15 minutes (a rotation exactly 15
+        minutes old no longer counts), otherwise 429 with Retry-After and no
+        change; if permitted, rotate. Earlier access tokens stay valid until
+        their own expiry.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: New token pair.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/RefreshSuperseded" }
+        "422": { $ref: "#/components/responses/Invalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: End the current device session.
+      responses:
+        "204": { description: Signed out. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
+
+  /v1/auth/recover:
+    post:
+      tags: [auth]
+      operationId: recoverAccount
+      summary: Set a new password with a recovery code.
+      description: |
+        Consumes the code, revokes every session and refresh-token family, and
+        does not sign the caller in. Local data on devices is untouched.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecoverRequest" }
+      responses:
+        "204": { description: Password changed; sign in again. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Invalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
+
+  /v1/auth/recovery-codes:
+    post:
+      tags: [auth]
+      operationId: regenerateRecoveryCodes
+      summary: Replace all recovery codes. Old codes stop working.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordConfirm" }
+      responses:
+        "200":
+          description: New codes, shown once.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecoveryCodes" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
+
+  /v1/auth/password:
+    post:
+      tags: [auth]
+      operationId: changePassword
+      summary: Change the password; other sessions are revoked.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangePasswordRequest" }
+      responses:
+        "204": { description: Password changed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Invalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
+
+  /v1/devices:
+    get:
+      tags: [devices]
+      operationId: listDevices
+      summary: Devices signed in to this account.
+      responses:
+        "200":
+          description: Device list.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items: { $ref: "#/components/schemas/Device" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
+
+  /v1/devices/{deviceId}:
+    delete:
+      tags: [devices]
+      operationId: revokeDevice
+      summary: Revoke a device session. Its local data is not touched.
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Uuid" }
+      responses:
+        "204": { description: Revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
+
+  /v1/sync/push:
+    post:
+      tags: [sync]
+      operationId: syncPush
+      summary: Apply a batch of client operations.
+      description: |
+        Each operation is applied independently and idempotently by `op_id`.
+        A rejected operation does not stop the batch. The device is taken
+        from the access token. Only a 200 carries per-operation outcomes: a
+        timeout, a dropped connection or any 5xx leaves the outcome of every
+        operation UNKNOWN (operations commit independently), and the client
+        re-sends the in-flight operations byte-identical (SYNC 4.4). 401, 413,
+        422 and 429 are returned before any operation is applied. Results,
+        rejections included, are remembered per `op_id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PushRequest" }
+      responses:
+        "200":
+          description: One result per operation, in order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PushResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "422": { $ref: "#/components/responses/Invalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/sync/pull:
+    get:
+      tags: [sync]
+      operationId: syncPull
+      summary: Changes after a cursor, oldest first, latest state per entity.
+      description: |
+        The cursor only advances through this call. It must never be set from
+        the `seq` of a push result. `head_seq`, `changes` and `conflicts` come
+        from one consistent snapshot (SYNC 5.1); on the last page `next_cursor`
+        equals `head_seq`. A cursor above the account's head answers 409
+        `cursor_ahead` and the client treats it as an epoch change.
+      parameters:
+        - name: cursor
+          in: query
+          required: true
+          schema: { type: integer, minimum: 0 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        "200":
+          description: A page of changes and the conflict notices that fall in its range.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PullResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: The cursor is ahead of the server (`cursor_ahead`); treat as an epoch change.
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422": { $ref: "#/components/responses/Invalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/sync/state:
+    get:
+      tags: [sync]
+      operationId: syncState
+      summary: Head sequence number and server epoch.
+      responses:
+        "200":
+          description: Sync state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncState" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/sync/conflicts:
+    get:
+      tags: [sync]
+      operationId: listConflicts
+      summary: Conflict history (kept 90 days), oldest first.
+      parameters:
+        - name: since_seq
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        "200":
+          description: Conflict records.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [conflicts, has_more]
+                properties:
+                  conflicts:
+                    type: array
+                    items: { $ref: "#/components/schemas/Conflict" }
+                  has_more: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/export:
+    get:
+      tags: [account]
+      operationId: exportData
+      summary: All of the account's live tasks and settings as NDJSON.
+      description: |
+        One JSON object per line: `{"kind":"task","task":{...}}` or
+        `{"kind":"setting","key":"...","value":"..."}`. Tombstones are not exported.
+      responses:
+        "200":
+          description: NDJSON stream.
+          content:
+            application/x-ndjson:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
+
+  /v1/account/delete:
+    post:
+      tags: [account]
+      operationId: deleteAccount
+      summary: Permanently delete the account and all its cloud data.
+      description: |
+        Immediate and irreversible. Local data on every device is untouched.
+        There is no inactivity-based deletion in v1.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeleteAccountRequest" }
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Invalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServerBusy" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Opaque access token (about 15 minutes). The client must not parse it.
+
+  responses:
+    Unauthorized:
+      description: Missing, expired or revoked credentials.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    NotFound:
+      description: No such resource for this account.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Conflict:
+      description: The login name is taken.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Invalid:
+      description: The request is malformed or breaks a limit.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    TooLarge:
+      description: Body larger than the advertised limit.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    RateLimited:
+      description: |
+        Too many requests; honour Retry-After. Applies to the per-address limit
+        (120 admitted requests per rolling 15 minutes; endpoint scope PROPOSED,
+        see CLOUD.md 16.9), the per-family refresh limit (six rotations per
+        rolling 15 minutes) and the other limits. Nothing is changed.
+      headers:
+        Retry-After:
+          description: Whole seconds to wait, rounded up, at least 1.
+          schema: { type: integer, minimum: 1 }
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ServerBusy:
+      description: |
+        The server is temporarily at capacity (code `server_busy`): no
+        password-hashing permit, or a database lock or pool timeout. Retry after the stated delay. Nothing is changed. For
+        `exportData` it applies only before the first response byte.
+      headers:
+        Retry-After:
+          description: Whole seconds to wait; always 2.
+          schema: { type: integer, enum: [2] }
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    DeviceLimit:
+      description: |
+        25 active devices and no valid replacement was requested. Identical for
+        a missing, unknown, inactive or foreign `replace_device_id`. Returned
+        only after the password was verified. Carries no device information.
+        No session is created and nothing is revoked.
+      content: { application/json: { schema: { $ref: "#/components/schemas/DeviceLimitError" } } }
+    RefreshSuperseded:
+      description: |
+        This refresh token was already rotated by the request with the same
+        `operation_id`, whose response was lost. The successor cannot be
+        recovered. The family is not revoked; the client signs in again.
+      content: { application/json: { schema: { $ref: "#/components/schemas/RefreshSupersededError" } } }
+
+  schemas:
+    Uuid:
+      type: string
+      pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    Timestamp:
+      type: string
+      pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    SettingKey:
+      type: string
+      enum: [completed_cleanup_policy]
+    CleanupPolicy:
+      type: string
+      description: "`never`, `immediately` or `days:N` with N from 1 to 3650."
+      pattern: "^(never|immediately|days:[1-9][0-9]{0,3})$"
+    FieldGroup:
+      type: string
+      enum: [title, notes, list_name, priority, due_at, reminder_at, completion]
+    DeleteReason:
+      type: string
+      enum: [user, retention, clear_completed]
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+              enum: [unauthorized, forbidden, not_found, conflict, validation_failed,
+                     payload_too_large, rate_limited, unsupported_protocol, cursor_ahead,
+                     device_limit_reached, refresh_superseded, server_busy, internal]
+            message: { type: string }
+            request_id: { type: string }
+            details: { type: object }
+
+    DeviceLimitError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id, details]
+          properties:
+            code: { type: string, enum: [device_limit_reached] }
+            message: { type: string }
+            request_id: { type: string }
+            details:
+              type: object
+              additionalProperties: false
+              required: [limit, active]
+              properties:
+                limit: { type: integer, enum: [25] }
+                active: { type: integer, enum: [25] }
+
+    RefreshSupersededError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string, enum: [refresh_superseded] }
+            message: { type: string }
+            request_id: { type: string }
+            details: { type: object }
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok] }
+
+    VersionInfo:
+      type: object
+      required: [api, protocol_min, protocol_max, limits]
+      properties:
+        api: { type: string, enum: [v1] }
+        protocol_min: { type: integer, minimum: 1 }
+        protocol_max: { type: integer, minimum: 1 }
+        limits:
+          type: object
+          required: [max_ops_per_push, max_body_bytes, max_pull_limit]
+          properties:
+            max_ops_per_push: { type: integer }
+            max_body_bytes: { type: integer }
+            max_pull_limit: { type: integer }
+        moved_to:
+          type: [string, "null"]
+          description: |
+            Optional HTTPS URL of a new server. A client never switches on its
+            own: it shows the URL and asks the user.
+
+    DeviceInfo:
+      type: object
+      additionalProperties: false
+      required: [name, platform, client_version]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        platform: { type: string, enum: [windows, android, ios, macos, linux, other] }
+        client_version: { type: string, minLength: 1, maxLength: 50 }
+
+    Device:
+      type: object
+      required: [id, name, platform, created_at, last_seen_at, current]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string }
+        platform: { type: string }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        last_seen_at: { $ref: "#/components/schemas/Timestamp" }
+        current: { type: boolean }
+
+    NewPassword:
+      type: string
+      minLength: 1
+      maxLength: 512
+      description: |
+        A password being set (register, recover, change). The 1 to 512 bounds
+        are only a raw precheck. The server normalizes to NFC and then
+        requires 15 to 128 Unicode code points. Case and whitespace are
+        preserved; there are no composition rules and no periodic change.
+        A common-password blocklist also applies.
+
+    ExistingPassword:
+      type: string
+      minLength: 1
+      maxLength: 512
+      description: |
+        A password that already exists (login, current password, confirmation).
+        Raw 1 to 512 bounds only; the 15-code-point minimum for new passwords
+        is not applied. The server normalizes to NFC before verifying.
+
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [login, password, device]
+      properties:
+        login: { type: string, minLength: 3, maxLength: 254 }
+        password: { $ref: "#/components/schemas/NewPassword" }
+        device: { $ref: "#/components/schemas/DeviceInfo" }
+
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [login, password, device]
+      properties:
+        login: { type: string, minLength: 3, maxLength: 254 }
+        password: { $ref: "#/components/schemas/ExistingPassword" }
+        device: { $ref: "#/components/schemas/DeviceInfo" }
+        replace_device_id:
+          $ref: "#/components/schemas/Uuid"
+          description: |
+            Used only when 25 devices are active: one of the caller's own active
+            devices (from `GET /devices`) to revoke and replace. Ignored below
+            the limit.
+
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refresh_token, operation_id]
+      properties:
+        refresh_token: { type: string, minLength: 20, maxLength: 512 }
+        operation_id:
+          $ref: "#/components/schemas/Uuid"
+          description: |
+            Client-generated UUID, new for every refresh and reused only to
+            retry that exact request.
+
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer, minimum: 1, description: Seconds. }
+
+    AuthResponse:
+      type: object
+      required: [account_id, device_id, access_token, refresh_token, expires_in]
+      properties:
+        account_id: { $ref: "#/components/schemas/Uuid" }
+        device_id: { $ref: "#/components/schemas/Uuid" }
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer, minimum: 1 }
+        replaced_device_id:
+          $ref: "#/components/schemas/Uuid"
+          description: Present only on a sign-in (`POST /v1/auth/login`) that replaced a device at the 25-device limit; absent otherwise. Not part of TokenPair.
+
+    RecoveryCode:
+      type: string
+      description: 16 base32 characters (80 bits) in four groups.
+      pattern: "^[A-Z2-7]{4}(-[A-Z2-7]{4}){3}$"
+
+    RecoveryCodes:
+      type: object
+      additionalProperties: false
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          items: { $ref: "#/components/schemas/RecoveryCode" }
+
+    RegisterResponse:
+      type: object
+      required: [account_id, device_id, access_token, refresh_token, expires_in, recovery_codes]
+      properties:
+        account_id: { $ref: "#/components/schemas/Uuid" }
+        device_id: { $ref: "#/components/schemas/Uuid" }
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer, minimum: 1 }
+        recovery_codes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          items: { $ref: "#/components/schemas/RecoveryCode" }
+
+    RecoverRequest:
+      type: object
+      additionalProperties: false
+      required: [login, recovery_code, new_password]
+      properties:
+        login: { type: string, minLength: 3, maxLength: 254 }
+        recovery_code: { $ref: "#/components/schemas/RecoveryCode" }
+        new_password: { $ref: "#/components/schemas/NewPassword" }
+
+    PasswordConfirm:
+      type: object
+      additionalProperties: false
+      required: [password]
+      properties:
+        password: { $ref: "#/components/schemas/ExistingPassword" }
+
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [current_password, new_password]
+      properties:
+        current_password: { $ref: "#/components/schemas/ExistingPassword" }
+        new_password: { $ref: "#/components/schemas/NewPassword" }
+
+    DeleteAccountRequest:
+      type: object
+      additionalProperties: false
+      required: [password, confirm]
+      properties:
+        password: { $ref: "#/components/schemas/ExistingPassword" }
+        confirm: { type: string, enum: [DELETE] }
+
+    Task:
+      type: object
+      additionalProperties: false
+      description: |
+        Synced task fields. `reminder_sent` and the local integer id are never
+        synced. In every operation, `id` must equal the operation's `task_id`.
+      required: [id, title, notes, list_name, priority, due_at, completed, completed_at,
+                 reminder_at, created_at]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        title: { type: string, minLength: 1, maxLength: 500 }
+        notes: { type: string, maxLength: 100000 }
+        list_name: { type: string, minLength: 1, maxLength: 100 }
+        priority: { type: integer, minimum: 0, maximum: 2 }
+        due_at: { oneOf: [ { $ref: "#/components/schemas/Timestamp" }, { type: "null" } ] }
+        completed: { type: boolean }
+        completed_at: { oneOf: [ { $ref: "#/components/schemas/Timestamp" }, { type: "null" } ] }
+        reminder_at: { oneOf: [ { $ref: "#/components/schemas/Timestamp" }, { type: "null" } ] }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+
+    CreateOp:
+      type: object
+      additionalProperties: false
+      required: [op_id, type, task_id, base_rev, task]
+      properties:
+        op_id: { $ref: "#/components/schemas/Uuid" }
+        type: { type: string, enum: [create] }
+        task_id: { $ref: "#/components/schemas/Uuid" }
+        base_rev: { type: "null" }
+        task: { $ref: "#/components/schemas/Task" }
+        client_edited_at: { $ref: "#/components/schemas/Timestamp" }
+
+    UpdateOp:
+      type: object
+      additionalProperties: false
+      description: |
+        A deliberate user edit. `origin` is always `user`; sync-applied changes,
+        retention purges and reminder bookkeeping never produce one. `task` is
+        the client's full state, `changed` names the groups the user changed.
+      required: [op_id, type, task_id, base_rev, origin, changed, task]
+      properties:
+        op_id: { $ref: "#/components/schemas/Uuid" }
+        type: { type: string, enum: [update] }
+        task_id: { $ref: "#/components/schemas/Uuid" }
+        base_rev: { type: integer, minimum: 1 }
+        origin: { type: string, enum: [user] }
+        changed:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/FieldGroup" }
+        task: { $ref: "#/components/schemas/Task" }
+        client_edited_at: { $ref: "#/components/schemas/Timestamp" }
+
+    DeleteOp:
+      type: object
+      additionalProperties: false
+      required: [op_id, type, task_id, base_rev, reason]
+      properties:
+        op_id: { $ref: "#/components/schemas/Uuid" }
+        type: { type: string, enum: [delete] }
+        task_id: { $ref: "#/components/schemas/Uuid" }
+        base_rev: { type: integer, minimum: 1 }
+        reason: { $ref: "#/components/schemas/DeleteReason" }
+        client_edited_at: { $ref: "#/components/schemas/Timestamp" }
+
+    RestoreOp:
+      type: object
+      additionalProperties: false
+      description: |
+        Brings a tombstoned task back (undo of a delete that was already sent,
+        or the user choosing to keep a task deleted elsewhere). `task` is the
+        complete content to restore (the tombstone holds none) and is validated
+        exactly like a `create` (SYNC 7.6). `base_rev` must equal the
+        tombstone's revision; anything else is `invalid_base_rev`.
+      required: [op_id, type, task_id, base_rev, task]
+      properties:
+        op_id: { $ref: "#/components/schemas/Uuid" }
+        type: { type: string, enum: [restore] }
+        task_id: { $ref: "#/components/schemas/Uuid" }
+        base_rev: { type: integer, minimum: 1 }
+        task: { $ref: "#/components/schemas/Task" }
+        client_edited_at: { $ref: "#/components/schemas/Timestamp" }
+
+    SetSettingOp:
+      type: object
+      additionalProperties: false
+      required: [op_id, type, key, value, base_rev]
+      properties:
+        op_id: { $ref: "#/components/schemas/Uuid" }
+        type: { type: string, enum: [set_setting] }
+        key: { $ref: "#/components/schemas/SettingKey" }
+        value: { $ref: "#/components/schemas/CleanupPolicy" }
+        base_rev: { type: integer, minimum: 0, description: 0 when the setting has never been set. }
+        client_edited_at: { $ref: "#/components/schemas/Timestamp" }
+
+    Op:
+      oneOf:
+        - { $ref: "#/components/schemas/CreateOp" }
+        - { $ref: "#/components/schemas/UpdateOp" }
+        - { $ref: "#/components/schemas/DeleteOp" }
+        - { $ref: "#/components/schemas/RestoreOp" }
+        - { $ref: "#/components/schemas/SetSettingOp" }
+
+    PushRequest:
+      type: object
+      additionalProperties: false
+      required: [ops]
+      properties:
+        ops:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: "#/components/schemas/Op" }
+
+    ConflictKind:
+      type: string
+      enum: [field, setting, edit_over_delete, delete_lost_to_edit]
+
+    Conflict:
+      type: object
+      description: |
+        What was overwritten and by whom. `losing_value` and `winning_value`
+        are the field value (or `{completed, completed_at}` for `completion`).
+      required: [id, change_seq, kind, detected_at]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        change_seq: { type: integer, minimum: 0 }
+        kind: { $ref: "#/components/schemas/ConflictKind" }
+        detected_at: { $ref: "#/components/schemas/Timestamp" }
+        task_id: { $ref: "#/components/schemas/Uuid" }
+        key: { $ref: "#/components/schemas/SettingKey" }
+        field: { $ref: "#/components/schemas/FieldGroup" }
+        losing_value: {}
+        winning_value: {}
+        losing_device_id: { $ref: "#/components/schemas/Uuid" }
+        winning_device_id: { $ref: "#/components/schemas/Uuid" }
+        delete_reason: { $ref: "#/components/schemas/DeleteReason" }
+        deleted_at: { $ref: "#/components/schemas/Timestamp" }
+
+    OpStatus:
+      type: string
+      enum: [applied, merged, conflict_resolved, resurrected, restored, noop, rejected]
+
+    OpErrorCode:
+      type: string
+      enum: [validation_failed, empty_changes, unknown_task, already_exists, already_deleted,
+             invalid_base_rev, not_deleted, edit_won]
+
+    OpResult:
+      type: object
+      required: [op_id, status, replayed]
+      properties:
+        op_id: { $ref: "#/components/schemas/Uuid" }
+        status: { $ref: "#/components/schemas/OpStatus" }
+        replayed: { type: boolean }
+        code: { $ref: "#/components/schemas/OpErrorCode" }
+        message: { type: string }
+        rev: { type: integer, minimum: 1 }
+        seq: { type: integer, minimum: 1 }
+        task: { $ref: "#/components/schemas/Task" }
+        deleted: { type: boolean }
+        value: { $ref: "#/components/schemas/CleanupPolicy" }
+        conflicts:
+          type: array
+          items: { $ref: "#/components/schemas/Conflict" }
+        adjusted:
+          type: array
+          description: Fields the server clamped (`created_at`, `completed_at`).
+          items: { type: string, enum: [created_at, completed_at] }
+
+    PushResponse:
+      type: object
+      required: [server_epoch, results, head_seq]
+      properties:
+        server_epoch: { type: string }
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/OpResult" }
+        head_seq: { type: integer, minimum: 0 }
+
+    TaskChange:
+      type: object
+      additionalProperties: false
+      required: [kind, task_id, rev, seq, task]
+      properties:
+        kind: { type: string, enum: [task] }
+        task_id: { $ref: "#/components/schemas/Uuid" }
+        rev: { type: integer, minimum: 1 }
+        seq: { type: integer, minimum: 1 }
+        task: { $ref: "#/components/schemas/Task" }
+
+    TombstoneChange:
+      type: object
+      additionalProperties: false
+      description: Content-free deletion marker. Tombstones are kept for the life of the account.
+      required: [kind, task_id, rev, seq, deleted_at, delete_reason]
+      properties:
+        kind: { type: string, enum: [tombstone] }
+        task_id: { $ref: "#/components/schemas/Uuid" }
+        rev: { type: integer, minimum: 1 }
+        seq: { type: integer, minimum: 1 }
+        deleted_at: { $ref: "#/components/schemas/Timestamp" }
+        delete_reason: { $ref: "#/components/schemas/DeleteReason" }
+
+    SettingChange:
+      type: object
+      additionalProperties: false
+      required: [kind, key, value, rev, seq]
+      properties:
+        kind: { type: string, enum: [setting] }
+        key: { $ref: "#/components/schemas/SettingKey" }
+        value: { $ref: "#/components/schemas/CleanupPolicy" }
+        rev: { type: integer, minimum: 1 }
+        seq: { type: integer, minimum: 1 }
+
+    Change:
+      oneOf:
+        - { $ref: "#/components/schemas/TaskChange" }
+        - { $ref: "#/components/schemas/TombstoneChange" }
+        - { $ref: "#/components/schemas/SettingChange" }
+
+    PullResponse:
+      type: object
+      required: [server_epoch, changes, conflicts, next_cursor, head_seq, has_more]
+      properties:
+        server_epoch: { type: string }
+        changes:
+          type: array
+          items: { $ref: "#/components/schemas/Change" }
+        conflicts:
+          type: array
+          description: Conflicts whose `change_seq` lies in (cursor, next_cursor].
+          items: { $ref: "#/components/schemas/Conflict" }
+        next_cursor:
+          type: integer
+          minimum: 0
+          description: Seq of the last item; equals `head_seq` when `has_more` is false.
+        head_seq:
+          type: integer
+          minimum: 0
+          description: High-water mark of the snapshot this response was computed from.
+        has_more: { type: boolean }
+
+    SyncState:
+      type: object
+      required: [server_epoch, head_seq]
+      properties:
+        server_epoch: { type: string }
+        head_seq: { type: integer, minimum: 0 }

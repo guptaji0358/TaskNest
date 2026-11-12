@@ -18,6 +18,7 @@ TNToast 1.0 TNToast.qml
 QuickAddPanel 1.0 QuickAddPanel.qml
 TaskCheck 1.0 TaskCheck.qml
 NavItem 1.0 NavItem.qml
+TitleBar 1.0 TitleBar.qml
 TaskRow 1.0 TaskRow.qml
 ReminderBanner 1.0 ReminderBanner.qml
 EmptyState 1.0 EmptyState.qml
@@ -26,4 +27,5 @@ CleanupSettings 1.0 CleanupSettings.qml
 QuickCaptureWindow 1.0 QuickCaptureWindow.qml
 SelectionCaptureWindow 1.0 SelectionCaptureWindow.qml
 FloatingWidget 1.0 FloatingWidget.qml
+TrayIcon 1.0 TrayIcon.qml
 MainView 1.0 MainView.qml

@@ -1,0 +1,3 @@
+# Contract files must be byte-identical on every platform: the Qt tests and the
+# server tests read the same fixtures. LF line endings, no BOM.
+* text eol=lf

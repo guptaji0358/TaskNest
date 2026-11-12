@@ -59,6 +59,9 @@ class DeepLinkRouter : public QObject, public QAbstractNativeEventFilter
     Q_OBJECT
 public:
     static constexpr quintptr kCopyDataId = 0x544E4B4C; // "TNKL"
+    // A second plain launch asks the running instance to show its main window
+    // (it may be hidden to the tray). Carries no payload.
+    static constexpr quintptr kShowWindowId = 0x544E4B57; // "TNKW"
 
     explicit DeepLinkRouter(QObject *parent = nullptr);
 
@@ -71,5 +74,6 @@ signals:
     void openViewRequested(const QString &view);
     void openTaskRequested(qint64 taskId);
     void quickAddRequested();
+    void showWindowRequested();
     void rejected(const QString &reason);
 };

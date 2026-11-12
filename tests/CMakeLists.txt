@@ -29,6 +29,16 @@ add_test(NAME tasknest
             -DLOG=${CMAKE_CURRENT_BINARY_DIR}/tst_tasknest.log -DSKIP_BUDGET=${TASKNEST_SKIP_BUDGET}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/RunQtTest.cmake)
 
+# Schema v4, the local sync store and the shared client fixtures (api/conformance).
+qt_add_executable(tst_sync tst_sync.cpp)
+target_compile_definitions(tst_sync PRIVATE TASKNEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(tst_sync PRIVATE tasknestcore Qt6::Test)
+set(TASKNEST_SYNC_SKIP_BUDGET 0 CACHE STRING "Tests allowed to be skipped in tst_sync before the run counts as incomplete")
+add_test(NAME tasknest_sync
+    COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:tst_sync> -DNAME=tasknest_sync
+            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/tst_sync.log -DSKIP_BUDGET=${TASKNEST_SYNC_SKIP_BUDGET}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/RunQtTest.cmake)
+
 # UI tests: drive the real QML (scripts/main/MainView.qml) with Qt Quick Test.
 find_package(Qt6 REQUIRED COMPONENTS QuickTest Quick QuickControls2)
 

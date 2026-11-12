@@ -2,9 +2,9 @@ pragma Singleton
 import QtQuick
 import "DateTimeInput.js" as DateTimeInput
 
-// TaskNest design system: "quietly futuristic productivity".
-// Graphite surfaces with a cool undertone, one electric-lime accent used only
-// for actions and the active state, a violet secondary for reminders, and
+// TaskNest design system: Windows 11 Fluent, in the dark theme.
+// Layered graphite surfaces like Mica, one Windows-blue accent used only for
+// actions and the active state, a violet secondary for reminders, and
 // warm amber / red reserved for time pressure. Nothing outside this file
 // should hard-code a color, size, radius or duration.
 QtObject {
@@ -29,15 +29,15 @@ QtObject {
     readonly property real pressScale: motionOff ? 1.0 : 0.98 // pressed buttons
 
     // ---- surfaces -------------------------------------------------------
-    readonly property color bg: "#0E1014"            // window
-    readonly property color sidebar: "#12151B"       // navigation rail
-    readonly property color surface: "#171A21"       // main workspace
-    readonly property color surfaceHover: "#1C2028"  // row hover
-    readonly property color surfaceRaised: "#202530" // inputs, chips
-    readonly property color elevated: "#262B37"      // dialogs, popups
-    readonly property color scrim: "#B8080A0E"       // behind modal dialogs
-    readonly property color border: "#2B313C"
-    readonly property color borderStrong: "#3D4555"
+    readonly property color bg: "#18181B"            // window
+    readonly property color sidebar: "#1F1F23"       // navigation rail
+    readonly property color surface: "#242428"       // main workspace
+    readonly property color surfaceHover: "#2B2B30"  // row hover
+    readonly property color surfaceRaised: "#2D2D33" // inputs, chips
+    readonly property color elevated: "#36363D"      // dialogs, popups
+    readonly property color scrim: "#B80A0A0C"       // behind modal dialogs
+    readonly property color border: "#3A3A42"
+    readonly property color borderStrong: "#52525C"
 
     // ---- depth: layered light, not borders ------------------------------
     // Surfaces rise by adding white at low alpha; a 1px highlight on the top
@@ -48,22 +48,30 @@ QtObject {
     readonly property color highlight: Qt.rgba(1, 1, 1, 0.09)    // top-edge light
     readonly property color highlightStrong: Qt.rgba(1, 1, 1, 0.16)
     readonly property color shadow: Qt.rgba(0, 0, 0, 0.45)
-    readonly property color glowAccent: Qt.rgba(0.722, 0.949, 0.235, 0.085)
+
+    // 3D icon depth (Icon.qml): extrusion offset per layer on the 24-unit grid,
+    // how much darker the sides get, and how much lighter the lit edge is.
+    readonly property real iconDepthStep: 0.55
+    readonly property int iconDepthLayers: 3
+    readonly property real iconSideDarken: 1.9
+    readonly property real iconEdgeLighten: 1.55
+    readonly property color glowAccent: Qt.rgba(0.376, 0.804, 1.0, 0.085)
     readonly property color glowSecondary: Qt.rgba(0.64, 0.59, 1.0, 0.10)
-    readonly property color sidebarTop: "#181C26"                // lit edge of the rail
+    readonly property color sidebarTop: "#26262B"                // lit edge of the rail
 
     // ---- text -----------------------------------------------------------
-    readonly property color text: "#E8EAF0"          // primary (not pure white)
-    readonly property color textMuted: "#A2AABA"     // secondary, >= 6:1 on surface
-    readonly property color textFaint: "#7D8697"     // hints, >= 4.5:1 on surface
+    readonly property color text: "#F3F3F5"          // primary (not pure white)
+    readonly property color textMuted: "#B6B6C1"     // secondary, >= 6:1 on surface
+    readonly property color textFaint: "#90909C"     // hints, >= 4.5:1 on surface
 
-    // ---- accent: electric lime -----------------------------------------
-    readonly property color accent: "#B8F23C"
-    readonly property color accentHover: "#C8FA58"
-    readonly property color accentPressed: "#9ED42B"
-    readonly property color accentText: "#0F1405"      // text/icons on lime
-    readonly property color accentSoft: Qt.rgba(0.722, 0.949, 0.235, 0.13)
-    readonly property color accentLine: Qt.rgba(0.722, 0.949, 0.235, 0.45)
+    // ---- accent: Windows blue -----------------------------------------
+    readonly property color accent: "#60CDFF"
+    readonly property color accentHover: "#7AD6FF"
+    readonly property color accentPressed: "#4AB4E6"
+    readonly property color accentText: "#001A27"      // text/icons on blue
+    readonly property color accentSoft: Qt.rgba(0.376, 0.804, 1.0, 0.13)
+    readonly property color accentSoftHover: Qt.rgba(0.376, 0.804, 1.0, 0.22)
+    readonly property color accentLine: Qt.rgba(0.376, 0.804, 1.0, 0.45)
     readonly property color focus: accent
 
     // ---- secondary: violet (reminders) ---------------------------------
@@ -84,7 +92,7 @@ QtObject {
     // ---- typography -----------------------------------------------------
     // Single family names: if one is missing, Qt falls back to the system font.
     readonly property string fontFamily: "Segoe UI Variable Text"
-    readonly property string displayFamily: "Bahnschrift"
+    readonly property string displayFamily: "Segoe UI Variable Display"
     // px sizes: display / heading / title / body / label / caption / overline
     readonly property int fontDisplay: 28
     readonly property int fontHeading: 18
@@ -104,10 +112,13 @@ QtObject {
 
     // ---- shape ----------------------------------------------------------
     readonly property int radiusSm: 6     // rows, buttons, chips
-    readonly property int radiusMd: 10    // inputs, banners
-    readonly property int radiusLg: 16    // dialogs
+    readonly property int radiusMd: 8    // inputs, banners
+    readonly property int radiusLg: 12    // dialogs
     readonly property int controlHeight: 38
     readonly property int rowHeight: 54
+    readonly property int titleBarHeight: 40
+    readonly property int captionButtonWidth: 46
+    readonly property color captionCloseHover: "#C42B1C"
     readonly property int sidebarWidth: 240
     readonly property int railWidth: 68
     readonly property int railBreakpoint: 880 // window narrower than this: icon rail
@@ -126,6 +137,9 @@ QtObject {
         "edit": "M4 20h4L19 9l-4-4L4 16z M13.5 6.5l4 4",
         "trash": "M5 7h14 M10 7V4h4v3 M7 7l1 13h8l1-13 M10 11v5 M14 11v5",
         "close": "M6 6l12 12 M18 6L6 18",
+        "minimize": "M6 12h12",
+        "maximize": "M6 6h12v12H6z",
+        "restore": "M9 6h9v9 M6 9h9v9H6z",
         "check": "M5 12.5l4.5 4.5L19 7.5",
         "warning": "M12 4l9 16H3z M12 10v4 M12 17h.01",
         "clock": "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 7v5l3 2",
