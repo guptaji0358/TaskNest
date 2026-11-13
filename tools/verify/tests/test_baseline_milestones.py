@@ -84,6 +84,104 @@ def test_baseline_save_outside_a_git_repo_fails_and_writes_nothing(tmp_path, cap
     assert not (root / "out").exists()
 
 
+# --- baseline link isolation (symlinks / junctions) -------------------------------------------------
+
+def make_link(kind, link, target, is_dir=True):
+    """Create a symlink or Windows junction; skip explicitly (never pass silently) if unsupported."""
+    import os
+    import subprocess
+    if kind == "junction":
+        if os.name != "nt":
+            pytest.skip("junctions are Windows-only")
+        proc = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                              capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0:
+            pytest.skip("cannot create a junction here")
+        return
+    try:
+        os.symlink(target, link, target_is_directory=is_dir)
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot create a symlink here (needs Developer Mode or admin on Windows)")
+
+
+def external_dir(tmp_path):
+    ext = tmp_path / "external"
+    ext.mkdir()
+    (ext / "keep.txt").write_bytes(b"keep")
+    return ext
+
+
+def assert_refused(capsys, proj, *flags):
+    code, _, err = cli(capsys, proj, "--baseline-save", *flags)
+    assert code == core.EXIT_USAGE_OR_INCOMPLETE and "refusing" in err
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+@pytest.mark.parametrize("flags", [(), ("--force",)])
+def test_baseline_save_refuses_out_that_is_a_link(proj, tmp_path, capsys, kind, flags):
+    ext = external_dir(tmp_path)
+    make_link(kind, proj / "out", ext)
+    assert_refused(capsys, proj, *flags)
+    assert sorted(p.name for p in ext.iterdir()) == ["keep.txt"]
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+@pytest.mark.parametrize("flags", [(), ("--force",)])
+def test_baseline_save_refuses_verify_link_to_external_dir(proj, tmp_path, capsys, kind, flags):
+    ext = external_dir(tmp_path)
+    (proj / "out").mkdir()
+    make_link(kind, proj / "out" / "verify", ext)
+    assert_refused(capsys, proj, *flags)
+    assert sorted(p.name for p in ext.iterdir()) == ["keep.txt"]
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+@pytest.mark.parametrize("flags", [(), ("--force",)])
+def test_baseline_save_refuses_verify_link_to_another_dir_inside_out(proj, capsys, kind, flags):
+    sibling = proj / "out" / "server"
+    sibling.mkdir(parents=True)
+    make_link(kind, proj / "out" / "verify", sibling)
+    assert_refused(capsys, proj, *flags)
+    assert list(sibling.iterdir()) == []
+
+
+@pytest.mark.parametrize("flags", [(), ("--force",)])
+def test_baseline_save_refuses_baseline_file_symlink_to_external_file(proj, tmp_path, capsys, flags):
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"precious")
+    (proj / "out" / "verify").mkdir(parents=True)
+    make_link("symlink", baseline_file(proj), victim, is_dir=False)
+    assert_refused(capsys, proj, *flags)
+    assert victim.read_bytes() == b"precious"
+
+
+def test_baseline_save_refuses_tmp_file_symlink_to_external_file(proj, tmp_path, capsys):
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"precious")
+    (proj / "out" / "verify").mkdir(parents=True)
+    make_link("symlink", proj / "out" / "verify" / "baseline.json.tmp", victim, is_dir=False)
+    assert_refused(capsys, proj, "--force")
+    assert victim.read_bytes() == b"precious"
+    assert not baseline_file(proj).exists()
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+@pytest.mark.parametrize("flags", [(), ("--force",)])
+def test_baseline_save_refuses_dangling_out_link(proj, tmp_path, capsys, kind, flags):
+    ext = tmp_path / "gone"
+    ext.mkdir()
+    make_link(kind, proj / "out", ext)
+    ext.rmdir()  # now dangling
+    assert_refused(capsys, proj, *flags)
+    assert not ext.exists()  # nothing recreated through the link
+
+
+def test_baseline_save_refuses_out_that_is_a_file(proj, capsys):
+    write(proj, "out", "not a dir")
+    assert_refused(capsys, proj)
+    assert (proj / "out").read_text() == "not a dir"
+
+
 # --- baseline comparison ----------------------------------------------------------------------------
 
 def test_pre_existing_changes_are_not_attributed_to_the_task(proj, capsys):
