@@ -16,7 +16,7 @@ import pytest
 import core
 import fs_snapshot as fs
 
-TOOL_FILES = ("verify.py", "core.py", "repo.py", "gitro.py", "sqlro.py", "checks_contract.py", "checks_m1.py", "checks_git.py", "milestones.json")
+TOOL_FILES = ("verify.py", "core.py", "repo.py", "gitro.py", "sqlro.py", "checks_contract.py", "checks_m1.py", "checks_git.py", "checks_memory.py", "checks_server.py", "milestones.json")
 VERIFY_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -56,11 +56,13 @@ def test_cli_changes_nothing_in_a_complete_project_copy(temp_project):
     for args in ([], ["--json"], ["--list"], ["--only", "m1"], ["--only", "git"], ["--baseline"], ["--full"]):
         proc = run_cli(temp_project, *args)
         assert proc.returncode in (core.EXIT_OK, core.EXIT_FAIL, core.EXIT_USAGE_OR_INCOMPLETE), proc.stderr
-    results = json.loads(run_cli(temp_project, "--json").stdout)["results"]
+    results = json.loads(run_cli(temp_project, "--json", "--full").stdout)["results"]
     by_id = {f"{r['group']}.{r['id']}": r["status"] for r in results}
     assert by_id["contract.files_present"] == "FAIL"  # the temp project has no api/ directory
     assert by_id["m1.live_user_version"] == "SKIP"    # and no live database
     assert by_id["git.milestone_scope"] == "INCOMPLETE"  # allowed paths are only PROPOSED
+    assert by_id["memory.verify"] == "INCOMPLETE"        # no .claude/scripts/verify_memory.py in the temp project
+    assert by_id["server.check"] == "INCOMPLETE"         # --full ran it; no server/check.py in the temp project
     assert (temp_project / "tools" / "verify" / "milestones.json").is_file()
     result = fs.diff(before, fs.snapshot(temp_project))
     assert not fs.has_changes(result), result
@@ -147,3 +149,41 @@ def test_diff_helper_unit():
     before = {"a": "file:1:x", "b": "dir", "out/verify/z": "file:1:y"}
     after = {"a": "file:1:z", "c": "dir", "out/verify/z": "file:2:q", "out/verify/n": "dir"}
     assert fs.diff(before, after) == {"created": ["c"], "deleted": ["b"], "modified": ["a"]}
+
+
+# --- owner-approved exception: out/server/ only for the server checker (Step 3.5) -----------
+
+def test_out_server_is_not_permitted_by_default(temp_project):
+    def mutate(r):
+        (r / "out" / "server" / "pycache").mkdir(parents=True)
+        (r / "out" / "server" / "pycache" / "x.pyc").write_bytes(b"0")
+    res = changed(temp_project, mutate)
+    assert res["created"] == ["out/server", "out/server/pycache", "out/server/pycache/x.pyc"]
+
+
+def test_server_checker_scope_permits_out_server_but_nothing_else(temp_project):
+    before = fs.snapshot(temp_project)
+    (temp_project / "out" / "server" / ".pytest_cache").mkdir(parents=True)
+    (temp_project / "out" / "server-evil").mkdir()
+    (temp_project / "out" / "bin" / "keep.txt").write_text("tampered\n", encoding="utf-8")
+    (temp_project / "server").mkdir()
+    (temp_project / "server" / "stray.txt").write_text("x", encoding="utf-8")
+    res = fs.diff(before, fs.snapshot(temp_project), fs.SERVER_CHECKER_PREFIXES)
+    assert res["created"] == ["out/server-evil", "server", "server/stray.txt"]
+    assert res["modified"] == ["out/bin/keep.txt"]
+
+
+def test_server_adapter_run_writes_only_inside_out_server(temp_project):
+    import checks_server as cs
+    import repo
+    (temp_project / "server").mkdir()
+    (temp_project / "server" / "check.py").write_text(
+        "from pathlib import Path\n"
+        "o = Path(__file__).resolve().parent.parent / 'out' / 'server' / 'pycache'\n"
+        "o.mkdir(parents=True, exist_ok=True); (o / 'a.pyc').write_bytes(b'0')\n", encoding="utf-8")
+    before = fs.snapshot(temp_project)
+    assert cs.check_server(repo.Ctx(root=temp_project)).status is core.Status.PASS
+    after = fs.snapshot(temp_project)
+    assert "out/server/pycache/a.pyc" in after
+    assert not fs.has_changes(fs.diff(before, after, fs.SERVER_CHECKER_PREFIXES))
+    assert not (temp_project / "out" / "verify" / "memory").exists()

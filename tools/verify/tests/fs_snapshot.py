@@ -13,6 +13,9 @@ from pathlib import Path
 # Writes are permitted only here (repo-relative, POSIX style). The system temp
 # directory is outside the tree and therefore never appears in a snapshot.
 ALLOWED_PREFIXES = ("out/verify",)
+# Owner-approved exception (Step 3.5): out/server/ is permitted ONLY for artifacts of the existing
+# server/check.py. Callers must opt in explicitly; the default stays strict.
+SERVER_CHECKER_PREFIXES = ALLOWED_PREFIXES + ("out/server",)
 
 
 def snapshot(root: Path) -> dict[str, str]:

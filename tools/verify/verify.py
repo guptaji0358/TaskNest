@@ -5,7 +5,7 @@
                                   [--baseline | --baseline-save [--force]]
 
 Read-only, except an explicit --baseline-save, which writes only out/verify/baseline.json.
-Implemented groups: contract, m1, git. Groups that are not implemented yet are reported NOT RUN, never PASS.
+Implemented groups: contract, m1, git, memory, server (server runs only with --full). Groups that are not implemented yet are reported NOT RUN, never PASS.
 Exit codes: 0 no FAIL/INCOMPLETE/NOT RUN; 1 any FAIL; 2 usage error, missing repo
 root, or any INCOMPLETE / NOT RUN without a FAIL.
 """
@@ -19,6 +19,8 @@ from pathlib import Path
 sys.dont_write_bytecode = True  # keep __pycache__ out of tools/verify/
 
 import checks_git  # noqa: E402
+import checks_memory  # noqa: E402
+import checks_server  # noqa: E402
 import checks_contract  # noqa: E402  (sibling modules; the script directory is on sys.path)
 import checks_m1  # noqa: E402
 import core  # noqa: E402
@@ -28,10 +30,7 @@ DEFAULT_MILESTONE = "M2.0"
 MILESTONE_RE = re.compile(r"^M\d+(\.\d+)*$")
 
 # Groups in the approved design that are not implemented in this phase.
-PENDING_GROUPS = (
-    ("memory", "not implemented yet"),
-    ("server", "not implemented yet"),
-)
+PENDING_GROUPS: tuple[tuple[str, str], ...] = ()  # all approved groups are implemented as of Step 3.5
 
 MILESTONE_NOTE = ("milestone selects the scope rules in tools/verify/milestones.json; approval comes only "
                   "from that file, never from the branch name")
@@ -40,6 +39,8 @@ DEFAULT_REGISTRY = core.Registry()
 checks_contract.register(DEFAULT_REGISTRY)
 checks_m1.register(DEFAULT_REGISTRY)
 checks_git.register(DEFAULT_REGISTRY)
+checks_memory.register(DEFAULT_REGISTRY)
+checks_server.register(DEFAULT_REGISTRY)
 
 
 class _Parser(argparse.ArgumentParser):
