@@ -154,6 +154,15 @@ def _unsafe_baseline_component(root: Path, target: Path) -> str:
     return ""
 
 
+def _discard_temp(temp: Path) -> None:
+    """Best-effort removal of the exact temp file after a failed save; never raises, never touches links/dirs."""
+    try:
+        if not _is_link(temp) and temp.is_file():
+            temp.unlink()
+    except OSError:
+        pass
+
+
 def save_baseline(root: Path, force: bool = False) -> tuple[bool, str]:
     """Write out/verify/baseline.json. Refuses to overwrite unless `force`. Returns (ok, message)."""
     state = GitState(root)
@@ -173,13 +182,18 @@ def save_baseline(root: Path, force: bool = False) -> tuple[bool, str]:
         return False, "out/verify/baseline.json already exists; use --force to overwrite"
     payload = {"entries": snapshot_entries(state), "format": BASELINE_FORMAT, "head": state.head}
     text = json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=True) + "\n"
+    temp = target.with_name("baseline.json.tmp")
+    replaced = False
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        temp = target.with_name("baseline.json.tmp")
         temp.write_bytes(text.encode("utf-8"))
         os.replace(temp, target)
+        replaced = True
     except OSError as exc:
         return False, f"cannot write baseline: {type(exc).__name__}"
+    finally:
+        if not replaced:
+            _discard_temp(temp)
     return True, f"baseline saved: out/verify/baseline.json (HEAD {state.head[:12]}, {len(payload['entries'])} paths)"
 
 

@@ -182,6 +182,131 @@ def test_baseline_save_refuses_out_that_is_a_file(proj, capsys):
     assert (proj / "out").read_text() == "not a dir"
 
 
+# --- temp-file cleanup on failed saves (failure injection) -------------------------------------------
+
+def verify_dir(root):
+    return root / "out" / "verify"
+
+
+def tmp_file(root):
+    return verify_dir(root) / "baseline.json.tmp"
+
+
+def partial_write(self, data):
+    with open(self, "wb") as fh:
+        fh.write(data[:5])
+    raise OSError("injected: disk full")
+
+
+def fail_replace(src, dst):
+    raise PermissionError("injected: target locked")
+
+
+def interrupt_replace(src, dst):
+    raise KeyboardInterrupt
+
+
+def seed_baseline(proj, capsys):
+    cli(capsys, proj, "--baseline-save")
+    write(proj, "later.txt")  # a forced re-save would differ from the seeded baseline
+    return baseline_file(proj).read_bytes()
+
+
+@pytest.mark.parametrize("inject", ["write", "replace"])
+def test_failed_save_removes_tmp_and_keeps_existing_baseline(proj, capsys, monkeypatch, inject):
+    before = seed_baseline(proj, capsys)
+    if inject == "write":
+        monkeypatch.setattr(cg.Path, "write_bytes", partial_write)
+    else:
+        monkeypatch.setattr(cg.os, "replace", fail_replace)
+    ok, msg = cg.save_baseline(proj, force=True)
+    assert not ok and msg.startswith("cannot write baseline: ")
+    assert not tmp_file(proj).exists()
+    assert baseline_file(proj).read_bytes() == before
+
+
+@pytest.mark.parametrize("inject", ["write", "replace"])
+def test_first_time_failed_save_leaves_no_baseline_or_tmp(proj, monkeypatch, inject):
+    if inject == "write":
+        monkeypatch.setattr(cg.Path, "write_bytes", partial_write)
+    else:
+        monkeypatch.setattr(cg.os, "replace", fail_replace)
+    ok, _ = cg.save_baseline(proj)
+    assert not ok
+    assert not baseline_file(proj).exists() and not tmp_file(proj).exists()
+
+
+def test_keyboard_interrupt_during_replace_propagates_and_cleans_tmp(proj, capsys, monkeypatch):
+    before = seed_baseline(proj, capsys)
+    monkeypatch.setattr(cg.os, "replace", interrupt_replace)
+    with pytest.raises(KeyboardInterrupt):
+        cg.save_baseline(proj, force=True)
+    assert not tmp_file(proj).exists()
+    assert baseline_file(proj).read_bytes() == before
+
+
+def test_cleanup_removes_only_the_exact_tmp_file(proj, capsys, monkeypatch):
+    before = seed_baseline(proj, capsys)
+    others = {"other.tmp": b"1", "baseline.json.bak": b"2", "notes.txt": b"3", "baseline.json.tmp.old": b"4"}
+    for name, data in others.items():
+        (verify_dir(proj) / name).write_bytes(data)
+    monkeypatch.setattr(cg.os, "replace", fail_replace)
+    ok, _ = cg.save_baseline(proj, force=True)
+    assert not ok and not tmp_file(proj).exists()
+    for name, data in others.items():
+        assert (verify_dir(proj) / name).read_bytes() == data
+    assert baseline_file(proj).read_bytes() == before
+
+
+def test_stale_tmp_from_earlier_failed_run_is_handled(proj, capsys, monkeypatch):
+    before = seed_baseline(proj, capsys)
+    tmp_file(proj).write_bytes(b"stale partial")
+    monkeypatch.setattr(cg.os, "replace", fail_replace)
+    ok, _ = cg.save_baseline(proj, force=True)
+    assert not ok and not tmp_file(proj).exists()
+    assert baseline_file(proj).read_bytes() == before
+    monkeypatch.undo()
+    tmp_file(proj).write_bytes(b"stale partial")
+    ok, _ = cg.save_baseline(proj, force=True)
+    assert ok and not tmp_file(proj).exists()
+    assert json.loads(baseline_file(proj).read_text(encoding="utf-8"))["format"] == cg.BASELINE_FORMAT
+
+
+def test_cleanup_failure_does_not_mask_the_original_error(proj, capsys, monkeypatch):
+    before = seed_baseline(proj, capsys)
+    real_unlink = cg.Path.unlink
+
+    def failing_unlink(self, *args, **kwargs):
+        raise OSError("injected: cannot unlink")
+
+    monkeypatch.setattr(cg.os, "replace", fail_replace)
+    monkeypatch.setattr(cg.Path, "unlink", failing_unlink)
+    ok, msg = cg.save_baseline(proj, force=True)
+    monkeypatch.setattr(cg.Path, "unlink", real_unlink)
+    assert not ok and msg == "cannot write baseline: PermissionError"
+    assert baseline_file(proj).read_bytes() == before
+
+
+def test_successful_save_writes_baseline_and_leaves_no_tmp(proj):
+    ok, msg = cg.save_baseline(proj)
+    assert ok and "baseline saved" in msg
+    data = json.loads(baseline_file(proj).read_text(encoding="utf-8"))
+    assert data["format"] == cg.BASELINE_FORMAT and data["head"] == git(proj, "rev-parse", "HEAD")
+    assert not tmp_file(proj).exists()
+
+
+def test_tmp_symlink_is_refused_and_neither_link_nor_victim_is_deleted(proj, tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"precious")
+    verify_dir(proj).mkdir(parents=True)
+    make_link("symlink", tmp_file(proj), victim, is_dir=False)
+    ok, msg = cg.save_baseline(proj, force=True)
+    assert not ok and "refusing" in msg
+    assert victim.read_bytes() == b"precious"
+    assert tmp_file(proj).is_symlink()
+    assert not baseline_file(proj).exists()
+
+
 # --- baseline comparison ----------------------------------------------------------------------------
 
 def test_pre_existing_changes_are_not_attributed_to_the_task(proj, capsys):
