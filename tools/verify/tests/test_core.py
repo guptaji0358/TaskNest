@@ -170,3 +170,90 @@ def test_json_is_valid_sorted_and_byte_stable():
                                "planned": 2, "total": 2}
     assert data["milestone"] == "M2.0"
     assert list(data) == sorted(data)
+
+
+# --- run_allowed: the only subprocess boundary -----------------------------------------------
+
+import subprocess
+import sys
+from pathlib import Path
+
+
+def test_allowlist_has_exactly_the_two_fixed_entries():
+    assert set(core.ALLOWED_COMMANDS) == {"server.check", "memory.verify"}
+    assert core.ALLOWED_COMMANDS["server.check"].script_parts == ("server", "check.py")
+    assert core.ALLOWED_COMMANDS["server.check"].timeout == 900
+    assert core.ALLOWED_COMMANDS["memory.verify"].script_parts == (".claude", "scripts", "verify_memory.py")
+    assert core.ALLOWED_COMMANDS["memory.verify"].timeout == 120
+
+
+@pytest.mark.parametrize("bad", ["", "git.status", "server", "memory.verify ", "../x", "python -c 1", sys.executable])
+def test_unknown_and_arbitrary_ids_rejected_before_any_process(monkeypatch, tmp_path, bad):
+    def boom(*a, **k):
+        raise AssertionError("a process must not start")
+    monkeypatch.setattr(core.subprocess, "run", boom)
+    with pytest.raises(ValueError):
+        core.run_allowed(bad, tmp_path, {})
+
+
+def test_signature_accepts_no_executable_arguments_or_cwd(tmp_path):
+    for kw in ({"cmd": ["x"]}, {"args": ["x"]}, {"cwd": "/"}, {"timeout": 1}, {"shell": True}):
+        with pytest.raises(TypeError):
+            core.run_allowed("server.check", tmp_path, {}, **kw)
+
+
+@pytest.mark.parametrize("spec_id", ["server.check", "memory.verify"])
+def test_exact_command_and_process_options(monkeypatch, tmp_path, spec_id):
+    seen = {}
+
+    class P:
+        returncode = 3
+        stdout = b"out"
+
+    def fake(cmd, **kw):
+        seen["cmd"], seen["kw"] = cmd, kw
+        return P()
+    monkeypatch.setattr(core.subprocess, "run", fake)
+    env = {"A": "1"}
+    outcome = core.run_allowed(spec_id, tmp_path, env)
+    spec = core.ALLOWED_COMMANDS[spec_id]
+    assert seen["cmd"] == [sys.executable, "-B", str(tmp_path.joinpath(*spec.script_parts))]
+    kw = seen["kw"]
+    assert kw["shell"] is False and kw["cwd"] == str(tmp_path) and kw["env"] == env
+    assert kw["stdin"] == subprocess.DEVNULL and kw["stderr"] == subprocess.STDOUT
+    assert kw["stdout"] == subprocess.PIPE and kw["timeout"] == spec.timeout
+    assert outcome == core.RunOutcome(3, "out")
+
+
+def test_timeout_keeps_partial_output(monkeypatch, tmp_path):
+    def slow(cmd, **k):
+        raise subprocess.TimeoutExpired(cmd, 1, output=b"partial \xff")
+    monkeypatch.setattr(core.subprocess, "run", slow)
+    o = core.run_allowed("server.check", tmp_path, {})
+    assert o.timed_out and o.returncode is None and o.output.startswith("partial") and not o.launch_error
+
+
+def test_timeout_without_output(monkeypatch, tmp_path):
+    def slow(cmd, **k):
+        raise subprocess.TimeoutExpired(cmd, 1)
+    monkeypatch.setattr(core.subprocess, "run", slow)
+    o = core.run_allowed("memory.verify", tmp_path, {})
+    assert o.timed_out and o.output == ""
+
+
+def test_launch_failure_reports_type_name_only(monkeypatch, tmp_path):
+    def boom(*a, **k):
+        raise FileNotFoundError("secret path detail")
+    monkeypatch.setattr(core.subprocess, "run", boom)
+    o = core.run_allowed("server.check", tmp_path, {})
+    assert o.launch_error == "FileNotFoundError" and o.returncode is None and not o.timed_out
+    assert "secret" not in repr(o)
+
+
+def test_real_process_runs_fixed_script_with_merged_output(tmp_path):
+    (tmp_path / "server").mkdir()
+    (tmp_path / "server" / "check.py").write_text(
+        "import sys\nprint('o'); print('e', file=sys.stderr); sys.exit(1)\n", encoding="utf-8")
+    import os
+    o = core.run_allowed("server.check", tmp_path, os.environ)
+    assert o.returncode == 1 and "o" in o.output and "e" in o.output

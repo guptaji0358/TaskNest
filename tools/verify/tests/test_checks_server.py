@@ -1,8 +1,10 @@
+import subprocess
 import sys
 
 import pytest
 
 import checks_server as cs
+import core
 from core import Registry, Status, run_plan, build_plan
 
 
@@ -40,7 +42,7 @@ def test_launch_failure_is_incomplete(fake_repo, monkeypatch):
     make_script(fake_repo, "pass\n")
     def boom(*a, **k):
         raise FileNotFoundError("nope")
-    monkeypatch.setattr(cs.subprocess, "run", boom)
+    monkeypatch.setattr(core.subprocess, "run", boom)
     r = cs.check_server(ctx_for(fake_repo))
     assert r.status is Status.INCOMPLETE and "could not be launched" in r.detail
 
@@ -48,8 +50,8 @@ def test_launch_failure_is_incomplete(fake_repo, monkeypatch):
 def test_timeout_is_incomplete(fake_repo, monkeypatch):
     make_script(fake_repo, "pass\n")
     def slow(*a, **k):
-        raise cs.subprocess.TimeoutExpired(a[0], 1, output=b"partial")
-    monkeypatch.setattr(cs.subprocess, "run", slow)
+        raise subprocess.TimeoutExpired(a[0], 1, output=b"partial")
+    monkeypatch.setattr(core.subprocess, "run", slow)
     r = cs.check_server(ctx_for(fake_repo))
     assert r.status is Status.INCOMPLETE and "timed out" in r.detail
 
@@ -63,7 +65,7 @@ def test_exact_command_cwd_and_no_shell(fake_repo, monkeypatch):
     def fake(cmd, **kw):
         seen["cmd"], seen["kw"] = cmd, kw
         return P()
-    monkeypatch.setattr(cs.subprocess, "run", fake)
+    monkeypatch.setattr(core.subprocess, "run", fake)
     cs.check_server(ctx_for(fake_repo))
     assert seen["cmd"] == [sys.executable, "-B", str(fake_repo / "server" / "check.py")]
     assert seen["kw"]["cwd"] == str(fake_repo) and seen["kw"]["shell"] is False
