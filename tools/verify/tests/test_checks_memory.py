@@ -1,10 +1,12 @@
 import hashlib
+import subprocess
 import sqlite3
 import sys
 
 import pytest
 
 import checks_memory as cm
+import core
 import fs_snapshot as fs
 import repo
 from core import Status
@@ -99,11 +101,11 @@ def test_launch_failure_and_timeout_incomplete(fake_repo, monkeypatch):
     before = sha(db)
     def boom(*a, **k):
         raise OSError("x")
-    monkeypatch.setattr(cm.subprocess, "run", boom)
+    monkeypatch.setattr(core.subprocess, "run", boom)
     assert run(fake_repo).status is Status.INCOMPLETE
     def slow(*a, **k):
-        raise cm.subprocess.TimeoutExpired(a[0], 1)
-    monkeypatch.setattr(cm.subprocess, "run", slow)
+        raise subprocess.TimeoutExpired(a[0], 1)
+    monkeypatch.setattr(core.subprocess, "run", slow)
     assert run(fake_repo).status is Status.INCOMPLETE
     assert sha(db) == before and not (fake_repo / "out" / "verify" / "memory").exists()
 
@@ -132,3 +134,67 @@ def test_writes_only_under_out_verify(fake_repo):
     res = fs.diff(before, fs.snapshot(fake_repo))
     assert res == {"created": ["out"], "deleted": [], "modified": []}  # only the out/ parent of out/verify/
     assert not (fake_repo / "out" / "verify" / "memory").exists()
+
+
+# --- memory.line_limit ----------------------------------------------------------------------
+
+def _mem(root, **files):
+    d = root / ".claude" / "memory"
+    d.mkdir(parents=True, exist_ok=True)
+    for name, count in files.items():
+        (d / name).write_text("line\n" * count, encoding="utf-8")
+    return d
+
+
+def test_line_limit_exactly_200_passes(fake_repo):
+    _mem(fake_repo, **{"a.md": 200})
+    assert cm.check_line_limit(repo.Ctx(root=fake_repo)).status is Status.PASS
+
+
+def test_line_limit_201_fails(fake_repo):
+    _mem(fake_repo, **{"a.md": 201})
+    r = cm.check_line_limit(repo.Ctx(root=fake_repo))
+    assert r.status is Status.FAIL and "a.md (201 lines)" in r.detail
+
+
+def test_line_limit_reports_only_over_limit_file_and_does_not_modify(fake_repo):
+    d = _mem(fake_repo, **{"ok.md": 10, "big.md": 250, "edge.md": 200})
+    before = {p.name: p.read_bytes() for p in d.iterdir()}
+    r = cm.check_line_limit(repo.Ctx(root=fake_repo))
+    assert r.status is Status.FAIL
+    assert "big.md" in r.detail and "ok.md" not in r.detail and "edge.md" not in r.detail
+    assert {p.name: p.read_bytes() for p in d.iterdir()} == before
+
+
+def test_line_limit_ignores_non_markdown(fake_repo):
+    d = _mem(fake_repo, **{"a.md": 5})
+    (d / "notes.txt").write_text("x\n" * 500, encoding="utf-8")
+    assert cm.check_line_limit(repo.Ctx(root=fake_repo)).status is Status.PASS
+
+
+def test_line_limit_missing_directory_or_files_skips(fake_repo):
+    assert cm.check_line_limit(repo.Ctx(root=fake_repo)).status is Status.SKIP
+    _mem(fake_repo)
+    assert cm.check_line_limit(repo.Ctx(root=fake_repo)).status is Status.SKIP
+
+
+def test_line_limit_unreadable_file_is_incomplete(fake_repo, monkeypatch):
+    d = _mem(fake_repo, **{"a.md": 5})
+    real = type(d).read_bytes
+
+    def boom(self):
+        if self.name == "a.md":
+            raise PermissionError("denied")
+        return real(self)
+    monkeypatch.setattr(type(d), "read_bytes", boom)
+    r = cm.check_line_limit(repo.Ctx(root=fake_repo))
+    assert r.status is Status.INCOMPLETE and "a.md" in r.detail
+
+
+def test_line_limit_registered_in_memory_group_and_deterministic():
+    import core
+    reg = core.Registry()
+    cm.register(reg)
+    ids = {s.full_id: s for s in reg.specs()}
+    assert "memory.line_limit" in ids and "memory.verify" in ids
+    assert ids["memory.line_limit"].kind == core.KIND_DETERMINISTIC and not ids["memory.line_limit"].slow

@@ -14,19 +14,20 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
-import subprocess
-import sys
 
+import core
 from checks_server import MAX_OUTPUT_CHARS, limit_output  # noqa: F401  (shared output rules)
 from core import Registry, Result, Status
 
 GROUP = "memory"
 ID = "verify"
-TIMEOUT_SECONDS = 120
 SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 DB_PARTS = (".claude", "memory", "memory.db")
 SCRIPT_PARTS = (".claude", "scripts", "verify_memory.py")
 WORK_PARTS = ("memory",)  # under out/verify
+MEMORY_DIR_PARTS = (".claude", "memory")
+LINE_LIMIT_ID = "line_limit"
+MAX_MEMORY_LINES = 200  # CLAUDE.md: every memory Markdown file stays at or under 200 lines
 
 
 def _sha256(path) -> str:
@@ -80,23 +81,21 @@ def check_memory(ctx):
         return _res(Status.INCOMPLETE,
                     f"could not copy memory.db to out/verify/memory ({type(exc).__name__}); memory NOT verified")
 
-    try:
-        proc = subprocess.run([sys.executable, "-B", str(script)], cwd=str(ctx.root),
-                              env=build_env(work, copy, ctx.out_dir), shell=False, stdin=subprocess.DEVNULL,
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
+    outcome = core.run_allowed("memory.verify", ctx.root, build_env(work, copy, ctx.out_dir))
+    if outcome.timed_out:
+        timeout = core.ALLOWED_COMMANDS["memory.verify"].timeout
         return _finish(source, before, work, Status.INCOMPLETE,
-                       f"verify_memory.py timed out after {TIMEOUT_SECONDS}s; memory NOT verified")
-    except OSError as exc:
+                       f"verify_memory.py timed out after {timeout:g}s; memory NOT verified")
+    if outcome.launch_error:
         return _finish(source, before, work, Status.INCOMPLETE,
-                       f"verify_memory.py could not be launched ({type(exc).__name__}); memory NOT verified")
+                       f"verify_memory.py could not be launched ({outcome.launch_error}); memory NOT verified")
 
-    output = proc.stdout.decode("utf-8", "replace")
-    if proc.returncode == 0:
+    output = outcome.output
+    if outcome.returncode == 0:
         return _finish(source, before, work, Status.PASS,
                        "verify_memory.py exited 0 on a copy of memory.db (output not shown)")
     shown = limit_output(output)
-    detail = f"verify_memory.py exited {proc.returncode} on a copy of memory.db" + (f"\n{shown}" if shown else "")
+    detail = f"verify_memory.py exited {outcome.returncode} on a copy of memory.db" + (f"\n{shown}" if shown else "")
     return _finish(source, before, work, Status.FAIL, detail)
 
 
@@ -112,5 +111,38 @@ def _finish(source, before, work, status: Status, detail: str):
     return _res(status, detail)
 
 
+def check_line_limit(ctx):
+    """Every .claude/memory/*.md file must have at most MAX_MEMORY_LINES lines (read-only)."""
+    directory = ctx.path(*MEMORY_DIR_PARTS)
+    if not directory.is_dir():
+        return Result(GROUP, LINE_LIMIT_ID, Status.SKIP, "no memory directory at .claude/memory")
+    try:
+        files = sorted(p for p in directory.glob("*.md") if p.is_file())
+    except OSError as exc:
+        return Result(GROUP, LINE_LIMIT_ID, Status.INCOMPLETE,
+                      f"cannot list .claude/memory ({type(exc).__name__}); line limit NOT verified")
+    if not files:
+        return Result(GROUP, LINE_LIMIT_ID, Status.SKIP, "no .md files in .claude/memory")
+    over, unreadable = [], []
+    for path in files:
+        try:
+            lines = len(path.read_bytes().decode("utf-8", errors="replace").splitlines())
+        except OSError:
+            unreadable.append(path.name)
+            continue
+        if lines > MAX_MEMORY_LINES:
+            over.append(f"{path.name} ({lines} lines)")
+    if over:
+        return Result(GROUP, LINE_LIMIT_ID, Status.FAIL,
+                      f"over the {MAX_MEMORY_LINES}-line limit: " + ", ".join(over)
+                      + ("; unreadable: " + ", ".join(unreadable) if unreadable else ""))
+    if unreadable:
+        return Result(GROUP, LINE_LIMIT_ID, Status.INCOMPLETE,
+                      "unreadable, line limit NOT verified: " + ", ".join(unreadable))
+    return Result(GROUP, LINE_LIMIT_ID, Status.PASS,
+                  f"{len(files)} memory file(s) are within {MAX_MEMORY_LINES} lines")
+
+
 def register(registry: Registry) -> None:
     registry.register(GROUP, ID, check_memory)
+    registry.register(GROUP, LINE_LIMIT_ID, check_line_limit)
