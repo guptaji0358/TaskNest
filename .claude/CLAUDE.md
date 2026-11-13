@@ -47,6 +47,7 @@ TaskNest/
 ├── CLAUDE.md, CLOUD.md, INTEGRATION.md, CMakeLists.txt
 ├── api/          # cloud contract only: openapi.yaml, SYNC.md, conformance/ (no code; LF, UTF-8, no BOM)
 ├── server/       # planned FastAPI backend (milestone M2); venv/caches/test output go under out/server/
+├── tools/verify/ # read-only Python verification toolkit (verify.py CLI, checks_*.py, tests/); optional, never part of the C++ build
 ├── browser-extension/   # MV3 extension
 ├── resources/    # app.qrc, app.rc, app.ico, app.manifest, runtime_manifest.cmake, make_icon.py
 ├── scripts/
@@ -56,7 +57,9 @@ TaskNest/
 ├── tests/        # Qt Test suites (tst_tasknest, tst_sync, tst_ui, qml/)
 └── out/          # generated, git-ignored
     ├── bin/      # TaskNest.exe, TaskNestHost.exe, qt.conf, data/ (LIVE), runtime/ (generated)
-    └── build/    # CMake/Ninja tree (disposable)
+    ├── build/    # CMake/Ninja tree (disposable)
+    ├── server/   # output of server/check.py only
+    └── verify/   # only output the toolkit writes (baseline.json via explicit --baseline-save)
 ```
 
 - Nothing generated may be written outside `out/`. Never put generated files in `scripts/`, `tests/` or the root.

@@ -28,6 +28,7 @@ Paths below are repo-relative. Read this index first, then only the files releva
 - **Local API, deep links, browser capture:** [features.md](features.md) → `INTEGRATION.md`.
 - **Cloud/sync or server work:** [cloud-and-server.md](cloud-and-server.md) first; never start a milestone without owner approval.
 - **Tests:** [build-and-test.md](build-and-test.md).
+- **Repo verification (contract, M1, git, memory, server):** [build-and-test.md](build-and-test.md) "Verification toolkit" → `tools/verify/verify.py`.
 
 ## Related memories and rules
 

@@ -37,6 +37,15 @@ ctest --test-dir out/build --output-on-failure
 - New QML component: add to `scripts/main/qmldir` **and** `QML_FILES` in `CMakeLists.txt`.
 - New test file: add to the matching `tests/CMakeLists.txt` target; keep `objectName`s used by UI tests.
 
+## Verification toolkit (`tools/verify/`, Python, optional)
+
+- Run: `python -B tools/verify/verify.py [--list] [--only contract,m1,git,memory,server|group.id] [--full] [--json] [--milestone M2.0] [--baseline | --baseline-save [--force]]`. Tests: `python -B -m pytest tools/verify/tests -p no:cacheprovider`.
+- Read-only: allowlisted Git (`gitro.py`), read-only SQLite (`sqlro.py`); only `--baseline-save` writes (`out/verify/baseline.json`); `server` adapter (needs `--full`) lets `server/check.py` write `out/server/`.
+- Exit 0 clean; 1 any FAIL; 2 usage error or INCOMPLETE/NOT RUN without FAIL. Statuses: PASS/FAIL/SKIP/INCOMPLETE/NOT RUN; SKIP never hides a FAIL.
+- Milestone scope comes only from `milestones.json`; M2.0 allowed paths are PROPOSED until the owner confirms (scope = INCOMPLETE).
+- Known real findings (kept, not excepted): `.claude/memory/memory.db` is a forbidden-path FAIL; live M1 DB is INCOMPLETE while `tasknest.db.lock` exists; 2 symlink tests SKIP where symlinks cannot be created.
+- Memory adapter runs `.claude/scripts/verify_memory.py` on a copy; neither it nor `server/check.py` is modified by the toolkit.
+
 ## Server (separate, off by default)
 
 Python steps live in [cloud-and-server.md](cloud-and-server.md). They never run as part of the C++ build.
