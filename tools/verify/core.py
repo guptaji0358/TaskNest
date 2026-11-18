@@ -1,14 +1,20 @@
 """Result model, check registry, runner and reporting for the verification toolkit.
 
-Step 3.1 foundation only: no real checks live here. Everything is deterministic
-(fixed ordering, no timestamps) and the module never writes to disk.
+Everything is deterministic (fixed ordering, no timestamps) and the module never
+writes to disk itself. Its one process responsibility is `run_allowed`: the single place
+that starts a subprocess, and only for the fixed two-entry ALLOWED_COMMANDS table
+(server.check, memory.verify). Callers pass an id, the repository root and an environment;
+they can never supply an executable, arguments or a working directory.
 """
 from __future__ import annotations
 
 import enum
 import json
+import subprocess
+import sys
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Sequence
+from pathlib import Path
+from typing import Callable, Iterable, Mapping, Sequence
 
 # Exit codes (approved design).
 EXIT_OK = 0
@@ -251,3 +257,53 @@ def format_json(results: Sequence[Result], planned: int, extra: dict | None = No
     if extra:
         payload.update(extra)
     return json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=True)
+
+
+# --- the only subprocess boundary -------------------------------------------------------------
+
+@dataclass(frozen=True)
+class AllowedCommand:
+    id: str
+    script_parts: tuple[str, ...]   # script path relative to the repository root
+    timeout: float                  # seconds
+
+
+ALLOWED_COMMANDS: dict[str, AllowedCommand] = {
+    "server.check": AllowedCommand("server.check", ("server", "check.py"), 900),
+    "memory.verify": AllowedCommand("memory.verify", (".claude", "scripts", "verify_memory.py"), 120),
+}
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    returncode: int | None   # None when the process timed out or could not be launched
+    output: str              # merged stdout+stderr, decoded; NOT redacted or capped here
+    timed_out: bool = False  # `output` then holds whatever was captured before the timeout
+    launch_error: str = ""   # exception type name only
+
+
+def _decode(data: object) -> str:
+    if isinstance(data, bytes):
+        return data.decode("utf-8", "replace")
+    return data if isinstance(data, str) else ""
+
+
+def run_allowed(spec_id: str, root: Path | str, env: Mapping[str, str]) -> RunOutcome:
+    """Run one allowlisted script: [sys.executable, "-B", <root>/<script>], cwd=root, no shell,
+    stdin closed, stdout and stderr merged, fixed timeout. Unknown ids raise ValueError before
+    anything starts. Environment building, redaction, output caps and status mapping belong to
+    the caller."""
+    spec = ALLOWED_COMMANDS.get(spec_id)
+    if spec is None:
+        raise ValueError(f"command is not on the allowlist: {spec_id!r}")
+    root = Path(root)
+    command = [sys.executable, "-B", str(root.joinpath(*spec.script_parts))]
+    try:
+        proc = subprocess.run(command, cwd=str(root), env=dict(env), shell=False,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              timeout=spec.timeout)
+    except subprocess.TimeoutExpired as exc:
+        return RunOutcome(None, _decode(exc.stdout), timed_out=True)
+    except OSError as exc:
+        return RunOutcome(None, "", launch_error=type(exc).__name__)
+    return RunOutcome(proc.returncode, _decode(proc.stdout))

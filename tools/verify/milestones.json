@@ -24,6 +24,26 @@
       "allowed_paths": [],
       "forbidden_imports": []
     },
+    "M2.1b": {
+      "approved": true,
+      "allowed_paths_status": "confirmed",
+      "description": "PostgreSQL foundation: config, async engine/session, transaction helper, Alembic, migration 0001 (five CLOUD.md 16.6 tables). No auth, tokens, recovery, sync or api/ changes. NOTE: forbidden_imports is required by the schema but NOT enforced by any check; the empty list is metadata only.",
+      "allowed_paths": [
+        "server/pyproject.toml",
+        "server/alembic.ini",
+        "server/README.md",
+        "server/app/config.py",
+        "server/app/db/**",
+        "server/migrations/**",
+        "server/tests/test_db_*.py",
+        "server/tests/test_migration_0001.py",
+        ".claude/memory/cloud-and-server.md",
+        ".claude/memory/build-and-test.md",
+        ".claude/memory/index.md",
+        ".claude/reports/usage_log.jsonl"
+      ],
+      "forbidden_imports": []
+    },
     "M3": {
       "approved": false,
       "allowed_paths_status": "proposed",

@@ -84,6 +84,229 @@ def test_baseline_save_outside_a_git_repo_fails_and_writes_nothing(tmp_path, cap
     assert not (root / "out").exists()
 
 
+# --- baseline link isolation (symlinks / junctions) -------------------------------------------------
+
+def make_link(kind, link, target, is_dir=True):
+    """Create a symlink or Windows junction; skip explicitly (never pass silently) if unsupported."""
+    import os
+    import subprocess
+    if kind == "junction":
+        if os.name != "nt":
+            pytest.skip("junctions are Windows-only")
+        proc = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                              capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0:
+            pytest.skip("cannot create a junction here")
+        return
+    try:
+        os.symlink(target, link, target_is_directory=is_dir)
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot create a symlink here (needs Developer Mode or admin on Windows)")
+
+
+def external_dir(tmp_path):
+    ext = tmp_path / "external"
+    ext.mkdir()
+    (ext / "keep.txt").write_bytes(b"keep")
+    return ext
+
+
+def assert_refused(capsys, proj, *flags):
+    code, _, err = cli(capsys, proj, "--baseline-save", *flags)
+    assert code == core.EXIT_USAGE_OR_INCOMPLETE and "refusing" in err
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+@pytest.mark.parametrize("flags", [(), ("--force",)])
+def test_baseline_save_refuses_out_that_is_a_link(proj, tmp_path, capsys, kind, flags):
+    ext = external_dir(tmp_path)
+    make_link(kind, proj / "out", ext)
+    assert_refused(capsys, proj, *flags)
+    assert sorted(p.name for p in ext.iterdir()) == ["keep.txt"]
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+@pytest.mark.parametrize("flags", [(), ("--force",)])
+def test_baseline_save_refuses_verify_link_to_external_dir(proj, tmp_path, capsys, kind, flags):
+    ext = external_dir(tmp_path)
+    (proj / "out").mkdir()
+    make_link(kind, proj / "out" / "verify", ext)
+    assert_refused(capsys, proj, *flags)
+    assert sorted(p.name for p in ext.iterdir()) == ["keep.txt"]
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+@pytest.mark.parametrize("flags", [(), ("--force",)])
+def test_baseline_save_refuses_verify_link_to_another_dir_inside_out(proj, capsys, kind, flags):
+    sibling = proj / "out" / "server"
+    sibling.mkdir(parents=True)
+    make_link(kind, proj / "out" / "verify", sibling)
+    assert_refused(capsys, proj, *flags)
+    assert list(sibling.iterdir()) == []
+
+
+@pytest.mark.parametrize("flags", [(), ("--force",)])
+def test_baseline_save_refuses_baseline_file_symlink_to_external_file(proj, tmp_path, capsys, flags):
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"precious")
+    (proj / "out" / "verify").mkdir(parents=True)
+    make_link("symlink", baseline_file(proj), victim, is_dir=False)
+    assert_refused(capsys, proj, *flags)
+    assert victim.read_bytes() == b"precious"
+
+
+def test_baseline_save_refuses_tmp_file_symlink_to_external_file(proj, tmp_path, capsys):
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"precious")
+    (proj / "out" / "verify").mkdir(parents=True)
+    make_link("symlink", proj / "out" / "verify" / "baseline.json.tmp", victim, is_dir=False)
+    assert_refused(capsys, proj, "--force")
+    assert victim.read_bytes() == b"precious"
+    assert not baseline_file(proj).exists()
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+@pytest.mark.parametrize("flags", [(), ("--force",)])
+def test_baseline_save_refuses_dangling_out_link(proj, tmp_path, capsys, kind, flags):
+    ext = tmp_path / "gone"
+    ext.mkdir()
+    make_link(kind, proj / "out", ext)
+    ext.rmdir()  # now dangling
+    assert_refused(capsys, proj, *flags)
+    assert not ext.exists()  # nothing recreated through the link
+
+
+def test_baseline_save_refuses_out_that_is_a_file(proj, capsys):
+    write(proj, "out", "not a dir")
+    assert_refused(capsys, proj)
+    assert (proj / "out").read_text() == "not a dir"
+
+
+# --- temp-file cleanup on failed saves (failure injection) -------------------------------------------
+
+def verify_dir(root):
+    return root / "out" / "verify"
+
+
+def tmp_file(root):
+    return verify_dir(root) / "baseline.json.tmp"
+
+
+def partial_write(self, data):
+    with open(self, "wb") as fh:
+        fh.write(data[:5])
+    raise OSError("injected: disk full")
+
+
+def fail_replace(src, dst):
+    raise PermissionError("injected: target locked")
+
+
+def interrupt_replace(src, dst):
+    raise KeyboardInterrupt
+
+
+def seed_baseline(proj, capsys):
+    cli(capsys, proj, "--baseline-save")
+    write(proj, "later.txt")  # a forced re-save would differ from the seeded baseline
+    return baseline_file(proj).read_bytes()
+
+
+@pytest.mark.parametrize("inject", ["write", "replace"])
+def test_failed_save_removes_tmp_and_keeps_existing_baseline(proj, capsys, monkeypatch, inject):
+    before = seed_baseline(proj, capsys)
+    if inject == "write":
+        monkeypatch.setattr(cg.Path, "write_bytes", partial_write)
+    else:
+        monkeypatch.setattr(cg.os, "replace", fail_replace)
+    ok, msg = cg.save_baseline(proj, force=True)
+    assert not ok and msg.startswith("cannot write baseline: ")
+    assert not tmp_file(proj).exists()
+    assert baseline_file(proj).read_bytes() == before
+
+
+@pytest.mark.parametrize("inject", ["write", "replace"])
+def test_first_time_failed_save_leaves_no_baseline_or_tmp(proj, monkeypatch, inject):
+    if inject == "write":
+        monkeypatch.setattr(cg.Path, "write_bytes", partial_write)
+    else:
+        monkeypatch.setattr(cg.os, "replace", fail_replace)
+    ok, _ = cg.save_baseline(proj)
+    assert not ok
+    assert not baseline_file(proj).exists() and not tmp_file(proj).exists()
+
+
+def test_keyboard_interrupt_during_replace_propagates_and_cleans_tmp(proj, capsys, monkeypatch):
+    before = seed_baseline(proj, capsys)
+    monkeypatch.setattr(cg.os, "replace", interrupt_replace)
+    with pytest.raises(KeyboardInterrupt):
+        cg.save_baseline(proj, force=True)
+    assert not tmp_file(proj).exists()
+    assert baseline_file(proj).read_bytes() == before
+
+
+def test_cleanup_removes_only_the_exact_tmp_file(proj, capsys, monkeypatch):
+    before = seed_baseline(proj, capsys)
+    others = {"other.tmp": b"1", "baseline.json.bak": b"2", "notes.txt": b"3", "baseline.json.tmp.old": b"4"}
+    for name, data in others.items():
+        (verify_dir(proj) / name).write_bytes(data)
+    monkeypatch.setattr(cg.os, "replace", fail_replace)
+    ok, _ = cg.save_baseline(proj, force=True)
+    assert not ok and not tmp_file(proj).exists()
+    for name, data in others.items():
+        assert (verify_dir(proj) / name).read_bytes() == data
+    assert baseline_file(proj).read_bytes() == before
+
+
+def test_stale_tmp_from_earlier_failed_run_is_handled(proj, capsys, monkeypatch):
+    before = seed_baseline(proj, capsys)
+    tmp_file(proj).write_bytes(b"stale partial")
+    monkeypatch.setattr(cg.os, "replace", fail_replace)
+    ok, _ = cg.save_baseline(proj, force=True)
+    assert not ok and not tmp_file(proj).exists()
+    assert baseline_file(proj).read_bytes() == before
+    monkeypatch.undo()
+    tmp_file(proj).write_bytes(b"stale partial")
+    ok, _ = cg.save_baseline(proj, force=True)
+    assert ok and not tmp_file(proj).exists()
+    assert json.loads(baseline_file(proj).read_text(encoding="utf-8"))["format"] == cg.BASELINE_FORMAT
+
+
+def test_cleanup_failure_does_not_mask_the_original_error(proj, capsys, monkeypatch):
+    before = seed_baseline(proj, capsys)
+    real_unlink = cg.Path.unlink
+
+    def failing_unlink(self, *args, **kwargs):
+        raise OSError("injected: cannot unlink")
+
+    monkeypatch.setattr(cg.os, "replace", fail_replace)
+    monkeypatch.setattr(cg.Path, "unlink", failing_unlink)
+    ok, msg = cg.save_baseline(proj, force=True)
+    monkeypatch.setattr(cg.Path, "unlink", real_unlink)
+    assert not ok and msg == "cannot write baseline: PermissionError"
+    assert baseline_file(proj).read_bytes() == before
+
+
+def test_successful_save_writes_baseline_and_leaves_no_tmp(proj):
+    ok, msg = cg.save_baseline(proj)
+    assert ok and "baseline saved" in msg
+    data = json.loads(baseline_file(proj).read_text(encoding="utf-8"))
+    assert data["format"] == cg.BASELINE_FORMAT and data["head"] == git(proj, "rev-parse", "HEAD")
+    assert not tmp_file(proj).exists()
+
+
+def test_tmp_symlink_is_refused_and_neither_link_nor_victim_is_deleted(proj, tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"precious")
+    verify_dir(proj).mkdir(parents=True)
+    make_link("symlink", tmp_file(proj), victim, is_dir=False)
+    ok, msg = cg.save_baseline(proj, force=True)
+    assert not ok and "refusing" in msg
+    assert victim.read_bytes() == b"precious"
+    assert tmp_file(proj).is_symlink()
+    assert not baseline_file(proj).exists()
+
+
 # --- baseline comparison ----------------------------------------------------------------------------
 
 def test_pre_existing_changes_are_not_attributed_to_the_task(proj, capsys):
@@ -161,12 +384,12 @@ def shipped():
     return json.loads((cg.Path(__file__).resolve().parents[1] / "milestones.json").read_text(encoding="utf-8"))
 
 
-def test_shipped_config_defaults_to_m2_0_and_only_m2_0_is_approved():
+def test_shipped_config_defaults_to_m2_0_and_only_m2_0_and_m2_1b_are_approved():
     config = shipped()
     assert cg._milestone_problem(config) == ""
     assert config["default"] == "M2.0" == verify.DEFAULT_MILESTONE
-    assert [m for m, c in config["milestones"].items() if c["approved"]] == ["M2.0"]
-    assert all(c["allowed_paths_status"] == "proposed" for c in config["milestones"].values())  # none confirmed
+    assert [m for m, c in config["milestones"].items() if c["approved"]] == ["M2.0", "M2.1b"]
+    assert all(c["allowed_paths_status"] == "proposed" for m, c in config["milestones"].items() if m != "M2.1b")  # only M2.1b confirmed
     assert config["milestones"]["M2.0"]["allowed_paths"] == [
         "CLOUD.md", "server/README.md", ".claude/memory/**", ".claude/reports/**", "tools/verify/**"]
     for cfg in config["milestones"].values():
@@ -306,6 +529,17 @@ def test_confirming_the_paths_enables_a_verdict(proj, capsys):
 
 def test_other_milestone_approval_states_are_unchanged(proj):
     states = {m: c["approved"] for m, c in shipped()["milestones"].items()}
-    assert states == {"M2.0": True, "M2.1": False, "M3": False}
+    assert states == {"M2.0": True, "M2.1": False, "M2.1b": True, "M3": False}
     for m in ("M2.1", "M3"):
         assert "not approved" in one(proj, "milestone_scope", milestone=m).detail
+
+
+@pytest.mark.parametrize("mid", ["M2.0", "M2.1", "M2.1b", "M3", "M10.2.3z"])
+def test_milestone_id_accepts_numeric_segments_with_one_lowercase_suffix(mid):
+    assert cg.MILESTONE_ID_RE.match(mid)
+
+
+@pytest.mark.parametrize("mid", ["M2.1B", "M2.1bc", "M2.b1", "M2.", "M.2", "M", "2.1b", "m2.1b", "M2..1",
+                                 "M2.1b ", "M2.1b\n", "M2.1-b", "M2.1_b", "M2.1b/", "M2 .1"])
+def test_milestone_id_rejects_malformed_ids(mid):
+    assert not cg.MILESTONE_ID_RE.match(mid)

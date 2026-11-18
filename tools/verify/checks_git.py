@@ -26,7 +26,7 @@ MILESTONES_FORMAT = "tasknest-verify-milestones/1"
 BASELINE_RELPATH = ("out", "verify", "baseline.json")
 MILESTONES_RELPATH = ("tools", "verify", "milestones.json")
 TOOL_OUTPUT_PREFIX = "out/verify/"  # the toolkit's own output is never part of a task's changes
-MILESTONE_ID_RE = re.compile(r"^M\d+(\.\d+)*$")
+MILESTONE_ID_RE = re.compile(r"^M\d+(\.\d+)*[a-z]?\Z")
 HEAD_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 MAX_LISTED = 8
 
@@ -129,12 +129,49 @@ def baseline_path(root: Path) -> Path:
     return root.joinpath(*BASELINE_RELPATH)
 
 
+def _is_link(path: Path) -> bool:
+    junction = getattr(path, "is_junction", None)
+    return path.is_symlink() or bool(junction and junction())
+
+
+def _unsafe_baseline_component(root: Path, target: Path) -> str:
+    """Reason string if any path component is a link (incl. dangling) or the wrong kind, else "".
+
+    Checked before anything is created. Residual limitation: this is check-then-write, so a link
+    swapped in between the check and the write is not detected (no O_NOFOLLOW-style handles).
+    """
+    out, verify = root / "out", target.parent
+    for path, must_be_dir in ((out, True), (verify, True), (target, False),
+                              (target.with_name("baseline.json.tmp"), False)):
+        rel = path.relative_to(root).as_posix()
+        if _is_link(path):
+            return f"{rel} is a symlink or junction"
+        if os.path.lexists(path):
+            if must_be_dir and not path.is_dir():
+                return f"{rel} exists but is not a directory"
+            if not must_be_dir and not path.is_file():
+                return f"{rel} exists but is not a regular file"
+    return ""
+
+
+def _discard_temp(temp: Path) -> None:
+    """Best-effort removal of the exact temp file after a failed save; never raises, never touches links/dirs."""
+    try:
+        if not _is_link(temp) and temp.is_file():
+            temp.unlink()
+    except OSError:
+        pass
+
+
 def save_baseline(root: Path, force: bool = False) -> tuple[bool, str]:
     """Write out/verify/baseline.json. Refuses to overwrite unless `force`. Returns (ok, message)."""
     state = GitState(root)
     if state.error:
         return False, f"cannot read git state: {state.error}"
     target = baseline_path(root)
+    unsafe = _unsafe_baseline_component(root, target)
+    if unsafe:
+        return False, f"refusing to write baseline: {unsafe}"
     try:
         out_dir = target.parent.resolve()
         if not out_dir.is_relative_to((root / "out").resolve()):
@@ -145,13 +182,18 @@ def save_baseline(root: Path, force: bool = False) -> tuple[bool, str]:
         return False, "out/verify/baseline.json already exists; use --force to overwrite"
     payload = {"entries": snapshot_entries(state), "format": BASELINE_FORMAT, "head": state.head}
     text = json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=True) + "\n"
+    temp = target.with_name("baseline.json.tmp")
+    replaced = False
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        temp = target.with_name("baseline.json.tmp")
         temp.write_bytes(text.encode("utf-8"))
         os.replace(temp, target)
+        replaced = True
     except OSError as exc:
         return False, f"cannot write baseline: {type(exc).__name__}"
+    finally:
+        if not replaced:
+            _discard_temp(temp)
     return True, f"baseline saved: out/verify/baseline.json (HEAD {state.head[:12]}, {len(payload['entries'])} paths)"
 
 

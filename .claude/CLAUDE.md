@@ -47,6 +47,7 @@ TaskNest/
 ├── CLAUDE.md, CLOUD.md, INTEGRATION.md, CMakeLists.txt
 ├── api/          # cloud contract only: openapi.yaml, SYNC.md, conformance/ (no code; LF, UTF-8, no BOM)
 ├── server/       # planned FastAPI backend (milestone M2); venv/caches/test output go under out/server/
+├── tools/verify/ # read-only Python verification toolkit (verify.py CLI, checks_*.py, tests/); optional, never part of the C++ build
 ├── browser-extension/   # MV3 extension
 ├── resources/    # app.qrc, app.rc, app.ico, app.manifest, runtime_manifest.cmake, make_icon.py
 ├── scripts/
@@ -56,7 +57,9 @@ TaskNest/
 ├── tests/        # Qt Test suites (tst_tasknest, tst_sync, tst_ui, qml/)
 └── out/          # generated, git-ignored
     ├── bin/      # TaskNest.exe, TaskNestHost.exe, qt.conf, data/ (LIVE), runtime/ (generated)
-    └── build/    # CMake/Ninja tree (disposable)
+    ├── build/    # CMake/Ninja tree (disposable)
+    ├── server/   # output of server/check.py only
+    └── verify/   # only output the toolkit writes (baseline.json via explicit --baseline-save)
 ```
 
 - Nothing generated may be written outside `out/`. Never put generated files in `scripts/`, `tests/` or the root.
@@ -167,7 +170,7 @@ Reasoning/risks: `CLOUD.md`. Protocol: `api/SYNC.md`, `api/openapi.yaml`. If cod
 - **Event-driven sync:** debounced push after local change, pull on activation, explicit "Sync now", single-shot backoff timers only while work is pending; no periodic polling; failures never block local use.
 - **Tests:** server tests use a local PostgreSQL with a dedicated test DB; Qt tests use temporary SQLite and a fake/local server; sync is refused under `--test-profile` against any real server. Both suites run `api/conformance/` fixtures in place.
 
-Delivery is by milestone M0–M10 (`CLOUD.md` §10); **each starts only after the owner explicitly approves it.** M0 (contract, rules, fixtures, docs) is complete. M1 (local storage groundwork: schema, UUIDs, bases, tombstones, outbox, transactional mutations, conflict table; no network code, `SyncStore`) was explicitly approved by the owner and is in progress — its schema changes are additive. The live database (`out/bin/data/tasknest.db`) is already at schema v4 (`user_version` 4): a migration has occurred, but who or what ran it is unknown (not recorded; Claude did not run it). The pre-migration backup `tasknest.db.v3.bak` (schema v3) remains available beside it; keep it. Sync itself (network, server, UI, account linking) is not implemented. **M2 (server skeleton: accounts, sessions, recovery, devices only) is approved in plan; only its documentation step M2.0 is approved so far.** M2 contains no sync tables or endpoints: `processed_ops`, `conflicts`, migration 0002 and the 90-day retention purge (with its database tests) belong to **M3**. The 90-day policy is documented now: deleted task content can remain in conflict history for up to 90 days. `api/` changes for M2 need separate owner approval of the shown diff. No M2.1+ work, dependency, PostgreSQL or Docker installation without explicit approval (`CLOUD.md` §16). Do not start the next milestone, run a migration, install software, or modify application source beyond the approved milestone's scope.
+Delivery is by milestone M0–M10 (`CLOUD.md` §10); **each starts only after the owner explicitly approves it.** M0 (contract, rules, fixtures, docs) is complete. M1 (local storage groundwork: schema, UUIDs, bases, tombstones, outbox, transactional mutations, conflict table; no network code, `SyncStore`) was explicitly approved by the owner and is in progress — its schema changes are additive. The live database (`out/bin/data/tasknest.db`) is already at schema v4 (`user_version` 4): a migration has occurred, but who or what ran it is unknown (not recorded; Claude did not run it). The pre-migration backup `tasknest.db.v3.bak` (schema v3) remains available beside it; keep it. Sync itself (network, server, UI, account linking) is not implemented. **M2 (server skeleton: accounts, sessions, recovery, devices only) is approved in plan; only its documentation step M2.0 is approved so far.** M2 contains no sync tables or endpoints: `processed_ops`, `conflicts`, migration 0003 and the 90-day retention purge (with its database tests) belong to **M3**. Migration order: 0001 account tables (M2.1b), 0002 `recovery_codes` (M2.2), 0003 sync (M3). The 90-day policy is documented now: deleted task content can remain in conflict history for up to 90 days. `api/` changes for M2 need separate owner approval of the shown diff. No M2.1+ work, dependency, PostgreSQL or Docker installation without explicit approval (`CLOUD.md` §16). Do not start the next milestone, run a migration, install software, or modify application source beyond the approved milestone's scope.
 
 ## Development Rules
 
@@ -196,3 +199,35 @@ Acceptance testing only; selected solely by the command-line option (never env v
 - `tests/RunQtTest.cmake` wraps the Qt Test executables (GUI-subsystem, no console): writes `out/build/tests/*.log`, prints failures/skips and `SUMMARY: N passed, N failed, N skipped`, and fails the CTest entry as **INCOMPLETE** when skips exceed the budget (`TASKNEST_SKIP_BUDGET`, `TASKNEST_UI_SKIP_BUDGET`; default 0). A green entry means every test ran. Wrapper covered by `qt_test_wrapper` (`RunQtTestSelfTest.cmake`, fake `tst_fakeqt`).
 - UI tests skip only after positively detecting that the window cannot get OS foreground activation. `tst_ui.qml` `cleanup()` destroys the view and waits until it and its dialogs (in the window overlay) are gone — `find()` returns the first match, so a stale dialog would take the next test's input.
 - `tst_tasknest` starts disposable processes under scratch profiles (`tst_lockowner`, real `TaskNest.exe --test-profile` with `QT_QPA_PLATFORM=offscreen`); they are killed even on failure and never use the live database.
+
+## Independent Testing and Evaluation (global policy)
+
+Applies whenever the task is to test, evaluate or review existing capabilities. Existing project rules above still apply; if one conflicts with this section, stop and ask the user instead of choosing silently.
+
+### Role: independent tester and real user
+Act as an independent software tester and actual application user. Discover and report functional bugs, unexpected behaviour, performance problems, usability issues, inconsistent behaviour, reliability problems, and missing or incomplete functionality. You are evaluating the product, not automatically developing or repairing it.
+
+### No-fix policy during testing
+Do not fix bugs found while testing: do not modify source code, refactor, silently change behaviour, commit or push, or implement fixes during an evaluation. Report problems with enough evidence to be addressed separately. Bug fixing and implementation need separate authorization.
+
+### Rate what works
+Testing is not only about finding bugs. When functionality works, rate it objectively:
+
+| Category | Question |
+|---|---|
+| Functionality | Does it perform its intended task? |
+| Reliability | Does it behave consistently? |
+| Performance | Is its responsiveness acceptable? |
+| Usability | Is the experience intuitive? |
+| Error handling | Does it handle failures properly? |
+
+Give an overall rating out of 10 with supporting observations. Never inflate ratings without evidence.
+
+### Incremental testing
+Test progressively during development, not in one massive campaign. Test the capability currently being developed, directly related functionality and relevant regression scenarios; record issues; evaluate what works; leave unrelated capabilities for their own development stages. The goal is continuous product evaluation, not a one-time audit.
+
+### Code exploration: CodeLens MCP by default
+Use CodeLens MCP as the default tool for reading and exploring related source code (understanding implementations, navigating functions and classes, tracing dependencies and execution paths, locating relevant code, understanding component interactions). Use other tools when needed for runtime testing, browser interaction, terminal execution, logs, screenshots or anything CodeLens does not support. It is the default, not an exclusive tool.
+
+### Evidence-based reporting
+For each evaluated capability report: capability name; overall rating /10; status (Working / Partially Working / Broken / Not Tested); verified working behaviours; bugs found; reproduction steps; expected vs actual behaviour; severity; evidence and measurements; remaining limitations; recommendations. Distinguish confirmed bugs from suspicions and untested assumptions.

@@ -5,7 +5,7 @@ setlocal
 cd /d "%~dp0"
 
 set "QT=D:\Apps\Qt6"
-set "PATH=%QT%\Tools\mingw1310_64\bin;%QT%\Tools\Ninja;%QT%\Tools\CMake_64\bin;%QT%\6.11.1\mingw_64\bin;%PATH%"
+set "PATH=%QT%\Tools\mingw1310_64\bin;%QT%\Tools\Ninja;%QT%\Tools\CMake_64\bin;%QT%\6.12.0\mingw_64\bin;%PATH%"
 set "BIN=%~dp0out\bin"
 
 echo [1/3] Stopping TaskNest if running...
@@ -17,7 +17,7 @@ powershell -NoProfile -Command ^
 
 echo [2/3] Building...
 if not exist "out\build\CMakeCache.txt" (
-    cmake -S . -B out/build -G Ninja -DCMAKE_PREFIX_PATH=D:/Apps/Qt6/6.11.1/mingw_64 -DCMAKE_CXX_COMPILER=D:/Apps/Qt6/Tools/mingw1310_64/bin/g++.exe
+    cmake -S . -B out/build -G Ninja -DCMAKE_PREFIX_PATH=D:/Apps/Qt6/6.12.0/mingw_64 -DCMAKE_CXX_COMPILER=D:/Apps/Qt6/Tools/mingw1310_64/bin/g++.exe
     if errorlevel 1 goto :fail
 )
 cmake --build out/build

@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlsplit
+
+from sqlalchemy.engine import URL
+
+from app.db.url import DatabaseUrlError, application_url, parse_pooled
 
 ENVIRONMENTS = ("dev", "test", "prod")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
@@ -31,6 +35,12 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 8000
     moved_to: str | None = None
+    # A SQLAlchemy URL object (validated by app.db.url). repr=False keeps it out of repr() only:
+    # dataclasses.asdict(), vars() and attribute access still return it, so it is not "secret-safe"
+    # beyond repr. A missing production URL is refused by make_engine, not here.
+    # TASKNEST_DATABASE_POOLED=false (default) is an operator assertion that this URL is a direct,
+    # non-pooled endpoint; the app cannot verify it, and "true" is rejected (unsupported).
+    database_url: URL | None = field(default=None, repr=False)
 
     @property
     def log_level_no(self) -> int:
@@ -62,4 +72,15 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
         if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
             raise ConfigError("TASKNEST_MOVED_TO must be an https URL without credentials")
 
-    return Settings(environment, log_level, host, int(port_text), moved_to)
+    # Raised after the except block so no raw exception is attached as __context__.
+    database_url = None
+    problem = None
+    try:
+        database_url = application_url(environ, environment)
+        parse_pooled(environ.get("TASKNEST_DATABASE_POOLED"))
+    except DatabaseUrlError as exc:
+        problem = str(exc)
+    if problem is not None:
+        raise ConfigError(problem)
+
+    return Settings(environment, log_level, host, int(port_text), moved_to, database_url)
