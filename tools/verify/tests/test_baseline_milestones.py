@@ -384,12 +384,12 @@ def shipped():
     return json.loads((cg.Path(__file__).resolve().parents[1] / "milestones.json").read_text(encoding="utf-8"))
 
 
-def test_shipped_config_defaults_to_m2_0_and_only_m2_0_is_approved():
+def test_shipped_config_defaults_to_m2_0_and_only_m2_0_and_m2_1b_are_approved():
     config = shipped()
     assert cg._milestone_problem(config) == ""
     assert config["default"] == "M2.0" == verify.DEFAULT_MILESTONE
-    assert [m for m, c in config["milestones"].items() if c["approved"]] == ["M2.0"]
-    assert all(c["allowed_paths_status"] == "proposed" for c in config["milestones"].values())  # none confirmed
+    assert [m for m, c in config["milestones"].items() if c["approved"]] == ["M2.0", "M2.1b"]
+    assert all(c["allowed_paths_status"] == "proposed" for m, c in config["milestones"].items() if m != "M2.1b")  # only M2.1b confirmed
     assert config["milestones"]["M2.0"]["allowed_paths"] == [
         "CLOUD.md", "server/README.md", ".claude/memory/**", ".claude/reports/**", "tools/verify/**"]
     for cfg in config["milestones"].values():
@@ -529,6 +529,17 @@ def test_confirming_the_paths_enables_a_verdict(proj, capsys):
 
 def test_other_milestone_approval_states_are_unchanged(proj):
     states = {m: c["approved"] for m, c in shipped()["milestones"].items()}
-    assert states == {"M2.0": True, "M2.1": False, "M3": False}
+    assert states == {"M2.0": True, "M2.1": False, "M2.1b": True, "M3": False}
     for m in ("M2.1", "M3"):
         assert "not approved" in one(proj, "milestone_scope", milestone=m).detail
+
+
+@pytest.mark.parametrize("mid", ["M2.0", "M2.1", "M2.1b", "M3", "M10.2.3z"])
+def test_milestone_id_accepts_numeric_segments_with_one_lowercase_suffix(mid):
+    assert cg.MILESTONE_ID_RE.match(mid)
+
+
+@pytest.mark.parametrize("mid", ["M2.1B", "M2.1bc", "M2.b1", "M2.", "M.2", "M", "2.1b", "m2.1b", "M2..1",
+                                 "M2.1b ", "M2.1b\n", "M2.1-b", "M2.1_b", "M2.1b/", "M2 .1"])
+def test_milestone_id_rejects_malformed_ids(mid):
+    assert not cg.MILESTONE_ID_RE.match(mid)

@@ -26,7 +26,7 @@ MILESTONES_FORMAT = "tasknest-verify-milestones/1"
 BASELINE_RELPATH = ("out", "verify", "baseline.json")
 MILESTONES_RELPATH = ("tools", "verify", "milestones.json")
 TOOL_OUTPUT_PREFIX = "out/verify/"  # the toolkit's own output is never part of a task's changes
-MILESTONE_ID_RE = re.compile(r"^M\d+(\.\d+)*$")
+MILESTONE_ID_RE = re.compile(r"^M\d+(\.\d+)*[a-z]?\Z")
 HEAD_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 MAX_LISTED = 8
 
