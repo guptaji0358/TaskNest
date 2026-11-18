@@ -49,3 +49,8 @@ ctest --test-dir out/build --output-on-failure
 ## Server (separate, off by default)
 
 Python steps live in [cloud-and-server.md](cloud-and-server.md). They never run as part of the C++ build.
+
+## Server database tooling (local, outside repo)
+- Approved server pins: `sqlalchemy[asyncio]==2.0.56`, `asyncpg==0.31.0`, `alembic==1.20.1`. Installed in `D:\Packages` (use `PYTHONPATH=D:\Packages;.`) are DIFFERENT: sqlalchemy 2.1.8, asyncpg 0.32.0 (alembic 1.20.1 matches). Runs there are NOT verification of the pins; an isolated venv (`out/server/venv`) is pending owner approval of the pip dry-run (cp313 win_amd64 wheels exist for all pins).
+- PostgreSQL 18.1 binaries `D:\Library\postgresql`, data `D:\Library\postgresql-data`, port 5433, DBs `tasknest_dev`, `tasknest_test`; start with `pg_ctl -D D:/Library/postgresql-data -o "-p 5433" start`.
+- DB tests read `TASKNEST_TEST_DATABASE_URL` and skip when unset.

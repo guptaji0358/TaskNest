@@ -35,3 +35,8 @@ Authoritative: `CLOUD.md` (decisions, roadmap §10, M2 plan §16), `api/SYNC.md`
 
 - Endpoint rate-limit and trusted-proxy rules (`CLOUD.md` §16.9) are proposed, not approved.
 - The OpenAPI changes listed in `CLOUD.md` §16.5 are not approved.
+
+## M2.1b database foundation (implemented, uncommitted, NOT complete until pinned-version gates pass)
+- `server/app/db/`: `tables.py` (five 16.6 tables), `url.py` (3-URL policy: app/migration/test; local host + `tasknest_dev`/`tasknest_test` in dev/test; no query params; prod TLS via `connect_args`; `TASKNEST_DATABASE_POOLED=true` rejected), `errors.py` (sanitized `DatabaseError`, specific SQLSTATE categories), `session.py` (`make_engine` refuses missing prod URL, `connection`, `transaction`, `run`). Alembic in `server/migrations/` (0001); env.py uses `migration_url`, no offline mode.
+- Design rules: raise translated errors outside `except` blocks (from None does not clear `__context__`); query errors translate only in `run()` because an asynccontextmanager would attach the body exception as `__context__`; cleanup failures are logged, never replace the primary error.
+- Tests: `test_db_urls.py`, `test_db_errors.py`, `test_db_alembic.py` (no DB); DB-gated tests skip without `TASKNEST_TEST_DATABASE_URL`. Not yet run against the pinned versions.
